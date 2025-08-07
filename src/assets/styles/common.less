@@ -1,0 +1,79 @@
+.font-m {
+  font-family: "SourceHanSansCN-Medium";
+}
+.font-b {
+  font-family: "SourceHanSansCN-Bold";
+}
+.font-r {
+  font-family: "SourceHanSansCN-Regular";
+}
+.font12 {
+  font-size: 0.8571rem;
+}
+.font16 {
+  font-size: 1.143rem;
+}
+.font18 {
+  font-size: 1.2857rem;
+}
+.color6 {
+  color: #666666;
+}
+.color9 {
+  color: #999999;
+}
+.color-green {
+  color: #009b4c;
+}
+
+.fw400 {
+  font-weight: 400;
+}
+.fw500 {
+  font-weight: 500;
+}
+.tl {
+  text-align: left;
+}
+
+.flex {
+  display: flex;
+  align-items: center;
+  &-center:extend(.flex) {
+    justify-content: center;
+  }
+  &-between:extend(.flex) {
+    justify-content: space-between;
+  }
+  &-start:extend(.flex) {
+    justify-content: flex-start;
+  }
+}
+
+.input-default {
+  width: 100%;
+  height: 3rem;
+  border-radius: 0.429rem;
+  background: #f6f9fc;
+  border: 0;
+  box-sizing: border-box;
+}
+
+.van-nav-bar {
+  .van-icon {
+    color: #333333 !important;
+  }
+  .van-nav-bar__text {
+    color: #333333 !important;
+  }
+}
+
+.err-message {
+  z-index: 9999 !important;
+}
+
+// 多选
+.van-checkbox__icon--checked .van-icon {
+  background-color: #19A55E;
+  border-color: #19A55E;
+}
