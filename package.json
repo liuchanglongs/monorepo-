@@ -7,7 +7,8 @@
   "scripts": {
     "dev:Vue": "pnpm run --F @monorepo/vue-project dev",
     "dev:React": "pnpm run --F @monorepo/react-project dev",
-    "dev": "pnpm -r --parallel --filter @monorepo/vue-project --filter @monorepo/react-project dev"
+    "dev": "pnpm -r --parallel --filter @monorepo/vue-project --filter @monorepo/react-project dev",
+    "add:com_vue2": "git subtree add --prefix=apps/com_vue2 https://github.com/liuchanglongs/com_vue2.git master --squash"
   },
   "keywords": [],
   "author": "",

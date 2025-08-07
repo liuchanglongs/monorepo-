@@ -42,3 +42,10 @@
 
 7. 配置同时启动两个项目的启动脚本
    "dev": "pnpm -r --parallel --filter @monorepo/vue-project --filter @monorepo/react-project dev"
+
+8. 使用公共项目的包
+
+- 创建项目：@monorepo/utils
+- 安装在要使用的目录下
+- pnpm add @monorepo/utils@workspace:\*
+  @monorepo/utils 在其它项目中被使用，修改它自己的源码也会一起更新。解决了 yalc 在被 node_modules 的缓存影响的问题。

@@ -28,6 +28,16 @@ importers:
         specifier: ^7.0.6
         version: 7.0.6
 
+  apps/react-project: {}
+
+  apps/vue-project:
+    dependencies:
+      '@monorepo/utils':
+        specifier: workspace:*
+        version: link:../../packages/utils
+
+  packages/utils: {}
+
 packages:
 
   '@ampproject/remapping@2.3.0':
