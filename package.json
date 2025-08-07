@@ -10,7 +10,8 @@
     "dev": "pnpm -r --parallel --filter @monorepo/vue-project --filter @monorepo/react-project dev",
     "add:com_vue2": "git subtree add --prefix=apps/com_vue2 git@github.com:liuchanglongs/com_vue2.git master --squash",
     "fetch:com_vue2": "git fetch git@github.com:liuchanglongs/com_vue2.git master",
-    "pull:com_vue2": "git subtree pull --prefix=apps/com_vue2 git@github.com:liuchanglongs/com_vue2.git master --squash"
+    "pull:com_vue2": "git subtree pull --prefix=apps/com_vue2 git@github.com:liuchanglongs/com_vue2.git master",
+    "push:com_vue2": "git subtree push --prefix=apps/com_vue2 git@github.com:liuchanglongs/com_vue2.git master"
   },
   "keywords": [],
   "author": "",
