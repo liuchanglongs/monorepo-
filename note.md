@@ -3,6 +3,10 @@
  * @Date: 2025/7/28
 -->
 
+# 1.md 语法的使用[](https://blog.csdn.net/qq_29898779/article/details/147140999)
+
+# 2.monorepo 的搭建
+
 1. 安装 pnpm
    npm install pnpm -g
    pnpm config get registry

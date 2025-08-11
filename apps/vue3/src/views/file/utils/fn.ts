@@ -1,0 +1,35 @@
+import SparkMD5 from 'spark-md5'
+
+export const createChunkFn = (file: File, index: number, chunkSize: number) => {
+  return new Promise((resolve, reject) => {
+    const start = index * chunkSize
+    const end = start + chunkSize
+    const blob = file.slice(start, end)
+    /**
+     * 创建用于处理二进制数据（如文件）的实例
+     * append(data)：添加数据（分块时逐次调用）
+     * end()：完成计算并返回最终的 MD5 哈希值（32 位小写字符串）
+     * */
+    const spark = new SparkMD5.ArrayBuffer()
+    const fileReader = new FileReader()
+    fileReader.readAsArrayBuffer(blob)
+    fileReader.onerror = err => {
+      console.log('fileReader', err)
+      reject
+    }
+    // 处理每块数据: 异步读取文件内容
+    fileReader.onload = e => {
+      const result: any = e.target?.result
+      if (!result) return
+      spark.append(result) // 添加分块数据
+      const md5 = spark.end()
+      resolve({
+        chunkStart: start,
+        chunkEnd: end,
+        chunkIndex: index,
+        chunkHash: md5,
+        chunkBlob: blob,
+      })
+    }
+  })
+}
