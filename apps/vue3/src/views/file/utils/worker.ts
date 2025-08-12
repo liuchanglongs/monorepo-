@@ -4,6 +4,8 @@ import SparkMD5 from 'spark-md5'
 //  这里的worker是一个独立的线程，不能直接访问DOM
 onmessage = async e => {
   const { file, end, start, chunkSize } = e.data
+  console.log('Worker index:', end, start, chunkSize)
+
   //   这里进行每个文件块的文件切片
   const result = []
   for (let index = start; index < end; index++) {
@@ -37,8 +39,11 @@ const createChunk = (file: File, index: number, chunkSize: number) => {
       spark.append(result) // 添加分块数据
       const md5 = spark.end()
       resolve({
+        // 开始的size
         chunkStart: start,
+        // 结束的size
         chunkEnd: end,
+        // 第几个切片
         chunkIndex: index,
         chunkHash: md5,
         chunkBlob: blob,

@@ -1,7 +1,7 @@
 <template>
   <div class="file">
     <div>
-      <input style="width: 240px" placeholder="Please input" @input="input" />
+      输入是否卡顿：<input style="width: 240px" placeholder="Please input" @input="input" />
     </div>
     <h1>文件上传：启用webwork</h1>
     <div>
@@ -51,7 +51,7 @@
           chunkSize: CHUNK_SIZE,
         })
         worker.onmessage = e => {
-          console.log(e.data)
+          console.log('Worker:', e.data)
         }
         worker.onerror = error => {
           console.error(`Worker ${index} encountered an error:`, error)
@@ -80,7 +80,8 @@
 
   const input = (event: Event): void => {
     const target = event.target as HTMLInputElement
-    ElMessage.primary(`This is a primary message: ${target.value}`)
+    // ElMessage.primary(`This is a primary message: ${target.value}`)
+    console.log('input:', target.value)
   }
   const open5 = () => {
     ElMessage.primary('This is a primary message.')
