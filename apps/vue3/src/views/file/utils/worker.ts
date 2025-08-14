@@ -1,21 +1,44 @@
 import SparkMD5 from 'spark-md5'
 
+export interface chunkType {
+  // 开始的size
+  chunkStart?: number
+  // 结束的size
+  chunkEnd?: number
+  // 第几个切片
+  chunkIndex: number
+  chunkHash?: string
+  chunkBlob?: Blob
+  uploaded: boolean // 是否上传过
+}
+
 //  每个worker对应一个文件块
 //  这里的worker是一个独立的线程，不能直接访问DOM
 onmessage = async e => {
-  const { file, end, start, chunkSize } = e.data
-  console.log('Worker index:', end, start, chunkSize)
+  const { file, end, start, chunkSize, uploadedChunks } = e.data
+  // console.log('Worker index:', end, start, chunkSize)
 
   //   这里进行每个文件块的文件切片
   const result = []
   for (let index = start; index < end; index++) {
+    if (uploadedChunks.includes(index.toString())) {
+      // 如果已经上传过了，就不需要再处理了
+      result.push(
+        Promise.resolve({
+          chunkIndex: index,
+          uploaded: true,
+        })
+      )
+      continue
+    }
     result.push(createChunk(file, index, chunkSize))
   }
-  const chunks = await Promise.all(result)
+  const chunks: chunkType[] = await Promise.all(result)
   postMessage(chunks)
 }
 
-const createChunk = (file: File, index: number, chunkSize: number) => {
+// 切片处理
+const createChunk = (file: File, index: number, chunkSize: number): Promise<chunkType> => {
   return new Promise((resolve, reject) => {
     const start = index * chunkSize
     const end = start + chunkSize
@@ -47,6 +70,7 @@ const createChunk = (file: File, index: number, chunkSize: number) => {
         chunkIndex: index,
         chunkHash: md5,
         chunkBlob: blob,
+        uploaded: false, // 是否上传过
       })
     }
   })
