@@ -1,3 +1,4 @@
+<!-- 所有的线程hash计算完在上传 -->
 <template>
   <div class="file">
     <div>

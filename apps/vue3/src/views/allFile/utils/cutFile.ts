@@ -8,61 +8,37 @@ export const cutFile = (
   file: File,
   CHUNK_SIZE: number,
   THREAD_COUNT: number,
-  uploadedChunks: string[],
-  uploadChunk: (
-    chunk: chunkType,
-    fileName: string
-    // chunks: chunkType[],
-    // index: number
-  ) => Promise<any>,
-  mergeChunks: (fileName: string) => Promise<any>
+  uploadedChunks: string[]
 ): Promise<any> => {
   return new Promise((resolve, reject) => {
-    // 已经上传完成的切片
-    const upLoadedChunks: chunkType[] = []
+    const result: chunkType[] = []
     let doneThreadCount = 0
     // 切片数量
     const totalChunks = Math.ceil(file.size / CHUNK_SIZE)
-    console.log('totalChunks', totalChunks)
-
     // 计算并发上传数量；每个线程需要的切片数量
     const concurrentUploads = Math.ceil(totalChunks / THREAD_COUNT)
-
     for (let index = 0; index < THREAD_COUNT; index++) {
       // 每个线程处理的切片范围start - end
       const start = index * concurrentUploads
       let end = start + concurrentUploads
-      // 处理最后一段，防止end>totalChunks
       if (totalChunks < end) {
         end = totalChunks
-      }
-      // 避免文件过小，开启空线程
-      if (start >= end) {
-        return
       }
       // 创建一个新的Worker实例,一个Worker实例对应一个文件块
       const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' })
       worker.postMessage({ file, start, end, chunkSize: CHUNK_SIZE, uploadedChunks })
       // 异步的
-      worker.onmessage = async e => {
-        const chunk: chunkType = e.data
-        // 切片上传
-        if (!chunk.uploaded) {
-          const res = await uploadChunk(chunk, file.name)
-          upLoadedChunks.push({ ...chunk, uploaded: true })
-        } else {
-          // 该切片已经上传
-
-          upLoadedChunks.push({ ...chunk })
-        }
-        // 销毁线程
-        if (chunk.isDoneThread) {
-          worker.terminate() // 终止当前worker线程
-        }
-
-        // 全部上传完合并
-        if (totalChunks === upLoadedChunks.length) {
-          await mergeChunks(file.name)
+      worker.onmessage = e => {
+        const chunks: chunkType[] = e.data
+        chunks.forEach(chunk => {
+          result[chunk.chunkIndex] = chunk
+        })
+        doneThreadCount++
+        worker.terminate() // 终止当前worker线程
+        // 所有线程都处理完了
+        if (doneThreadCount === THREAD_COUNT) {
+          //  返回数据
+          resolve(result)
         }
       }
       worker.onerror = error => {

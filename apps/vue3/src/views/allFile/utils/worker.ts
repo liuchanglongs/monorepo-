@@ -10,32 +10,33 @@ export interface chunkType {
   chunkHash?: string
   chunkBlob?: Blob
   uploaded: boolean // 是否上传过
-  isDoneThread?: true
 }
 
 //  每个worker对应一个文件块
 //  这里的worker是一个独立的线程，不能直接访问DOM
 onmessage = async e => {
   const { file, end, start, chunkSize, uploadedChunks } = e.data
-  let doneChunk = 0
-  const allChunk = end - start
+  // console.log('Worker index:', end, start, chunkSize)
 
   //   这里进行每个文件块的文件切片
+  const result = []
   for (let index = start; index < end; index++) {
     if (uploadedChunks.includes(index.toString())) {
       // 如果已经上传过了，就不需要再处理了
-      doneChunk++
-      postMessage({
-        chunkIndex: index,
-        uploaded: true,
-        isDoneThread: doneChunk == allChunk ? true : false,
-      })
+      result.push(
+        Promise.resolve({
+          chunkIndex: index,
+          uploaded: true,
+        })
+      )
       continue
     }
-    const chunk = await createChunk(file, index, chunkSize)
-    doneChunk++
-    postMessage({ ...chunk, isDoneThread: doneChunk == allChunk ? true : false })
+    result.push(createChunk(file, index, chunkSize))
   }
+  console.log('fetch', fetch)
+
+  const chunks: chunkType[] = await Promise.all(result)
+  postMessage(chunks)
 }
 
 // 切片处理
@@ -44,7 +45,6 @@ const createChunk = (file: File, index: number, chunkSize: number): Promise<chun
     const start = index * chunkSize
     const end = start + chunkSize
     const blob = file.slice(start, end)
-
     /**
      * 创建用于处理二进制数据（如文件）的实例
      * append(data)：添加数据（分块时逐次调用）
