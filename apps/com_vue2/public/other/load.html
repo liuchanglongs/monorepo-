@@ -1,0 +1,187 @@
+<!--
+ * @Author: lcl
+ * @Date: 2025/8/5
+ * @LastEditors: lcl
+ * @LastEditTime: 2025/8/5
+ * @Description: 登录认证文件
+-->
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+</head>
+
+<body>
+    <!-- 全屏 Loading 容器 -->
+    <div id="fullscreen-loading" class="fullscreen-loading">
+        <!-- 加载动画区域 -->
+        <div class="loading-content">
+            <!-- 加载图标（使用 CSS 动画） -->
+            <div class="loading-spinner"></div>
+            <!-- 加载文字 -->
+            <p class="loading-text">加载中...</p>
+        </div>
+    </div>
+</body>
+<style>
+    /* 全屏 Loading 容器 */
+    .fullscreen-loading {
+        /* 固定定位覆盖全屏 */
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        /* 背景半透明黑色，避免底层内容可见 */
+        background-color: rgb(51, 51, 51, 0.5);
+        /* 层级最高，覆盖其他内容 */
+        z-index: 9999;
+        /* 隐藏状态（默认不显示） */
+        display: none;
+        /* 弹性布局居中内容 */
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    /* 加载内容容器 */
+    .loading-content {
+        text-align: center;
+        color: #fff;
+        padding: 20px;
+    }
+
+    /* 加载动画（旋转圆圈） */
+    .loading-spinner {
+        width: 40px;
+        height: 40px;
+        margin: 0 auto 15px;
+        border: 4px solid rgba(255, 255, 255, 0.3);
+        border-radius: 50%;
+        /* 高亮边框 */
+        border-top-color: #fff;
+        /* 旋转动画 */
+        animation: spin 1s linear infinite;
+    }
+
+    /* 加载文字 */
+    .loading-text {
+        font-size: 16px;
+        font-family: sans-serif;
+        letter-spacing: 1px;
+    }
+
+    /* 旋转动画定义 */
+    @keyframes spin {
+        to {
+            transform: rotate(360deg);
+        }
+    }
+
+    /* 可选：添加淡入动画 */
+    .fullscreen-loading.show {
+        display: flex;
+        animation: fadeIn 0.3s ease-in-out;
+    }
+
+    @keyframes fadeIn {
+        from {
+            opacity: 0;
+        }
+
+        to {
+            opacity: 1;
+        }
+    }
+</style>
+<script>
+    // 在 JS 中使用变量（需要用引号包裹字符串）
+    const apiConfig = {
+        baseUrl: "<%= API_URL %>",
+        htmlWebpackPlugin: '<%= APP_NAME %>',
+        a: "<%= htmlWebpackPlugin.options.title %>",
+        REQUEST_URL: "<%= REQUEST_URL %>"
+    };
+    // 全屏 Loading 控制类
+    class FullscreenLoading {
+        constructor() {
+            // 获取 Loading 元素
+            this.loadingEl = document.getElementById('fullscreen-loading');
+            // 初始化隐藏
+            this.hide();
+        }
+
+        // 显示 Loading
+        show(text = '加载中...') {
+            if (!this.loadingEl) return;
+            // 更新文字（可选）
+            const textEl = this.loadingEl.querySelector('.loading-text');
+            if (textEl) textEl.textContent = text;
+            // 显示 Loading
+            this.loadingEl.classList.add('show');
+            // 禁止底层滚动（可选）
+            document.body.style.overflow = 'hidden';
+        }
+
+        // 隐藏 Loading
+        hide() {
+            if (!this.loadingEl) return;
+            // 隐藏 Loading
+            this.loadingEl.classList.remove('show');
+            // 恢复底层滚动（可选）
+            document.body.style.overflow = '';
+        }
+    }
+
+    // 实例化并暴露全局对象
+    const loading = new FullscreenLoading();
+    // 页面打开时显示 Loading
+    loading.show('数据加载中...');
+    const { origin, search } = window.location
+    const code = new URLSearchParams(search).get('code');
+    // 假设code变量已经定义
+    fetch('<%= REQUEST_URL %>/api/user/oauth2/login', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            // 可以根据需要添加其他请求头，如Authorization等
+        },
+        body: JSON.stringify({
+            code: code  // 传递code参数
+        })
+    })
+        .then(response => {
+            // 检查响应状态
+            if (!response.ok) {
+                loading.hide();
+                throw new Error('网络响应不正常');
+
+            }
+            // 解析JSON响应
+            return response.json();
+        })
+        .then(res => {
+            // 处理成功返回的数据
+            const data = res?.data || {}
+            if (data) {
+                localStorage.setItem("wvp-user", JSON.stringify(data));
+                localStorage.setItem("wvp-token", data?.accessToken || '');
+                window.location.href = `${origin}/#/`;
+            }
+            loading.hide();
+            // 可以在这里添加后续操作，如存储token、跳转页面等
+        })
+        .catch(error => {
+            // 处理错误
+            loading.hide();
+            console.error('登录请求失败:', error);
+        });
+</script>
+
+
+
+
+</html>
