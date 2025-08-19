@@ -14,11 +14,13 @@
   import type { chunkType } from './utils/worker'
   import { cutFile } from './utils/cutFile'
   import { onMounted } from 'vue'
+  import { useRequestQueue } from './utils/useRequestQueue'
   onMounted(() => {
     // 初始化一些操作
   })
   const CHUNK_SIZE = 1024 * 1024 * 5 // 5MB
   const THREAD_COUNT = navigator.hardwareConcurrency || 4 // 并发上传数量
+  const { addRequest } = useRequestQueue()
   console.log('THREAD_COUNT', THREAD_COUNT)
 
   const uploadFile = async (event: Event): Promise<any> => {
@@ -27,60 +29,71 @@
     if (files && files.length > 0) {
       const file = files[0]
       const { data: uploadedChunks } = await getUploadedChunks(file.name)
-      const chunksArry: chunkType[] = await cutFile(
+      await cutFile(
         file,
         CHUNK_SIZE,
         THREAD_COUNT,
         uploadedChunks,
-        uploadChunk,
-        mergeChunks
+        async (chunk: chunkType, totalChunks: number, upLoadedChunks: chunkType[]) => {
+          // 切片上传
+          if (!chunk.uploaded) {
+            addRequest(async () => {
+              const res = await uploadChunk(chunk, file.name)
+              // if (!res) {
+              //   throw Error('请求失败')
+              // }
+              upLoadedChunks.push({ ...chunk, uploaded: true })
+              if (totalChunks === upLoadedChunks.length) {
+                await mergeChunks(file.name)
+              }
+            })
+          } else {
+            // 该切片已经上传
+            upLoadedChunks.push({ ...chunk })
+          }
+          // 全部上传完合并：mer接口失败的时候
+          if (totalChunks === upLoadedChunks.length) {
+            await mergeChunks(file.name)
+          }
+        }
       )
-      let uploadedCount = 0 // 已上传的切片数量
-
-      // 暂时一个接着一个发请求
-      // for (let i = 0; i < chunksArry.length; i++) {
-      //   const chunk = chunksArry[i]
-      //   if (chunk.uploaded) {
-      //     uploadedCount++
-      //     if (uploadedCount === chunksArry.length) {
-      //       // 如果所有切片都上传成功，合并切片
-      //       await mergeChunks(file.name)
-      //     }
-      //     continue
-      //   }
-      //   await uploadChunk(chunk, file.name, chunksArry, i)
-      // }
     }
-    console.log('end')
   }
   // 上传切片文件
-  const uploadChunk = async (
-    chunk: chunkType,
-    fileName: string
-    // chunks: chunkType[],
-    // index: number
-  ) => {
+  const uploadChunk = async (chunk: chunkType, fileName: string) => {
     const fromData = new FormData()
     const { chunkBlob, chunkHash, chunkIndex } = chunk
-    fromData.append('chunkBlob', chunkBlob || '')
     fromData.append('chunkHash', chunkHash || '')
     fromData.append('chunkFilename', fileName)
     fromData.append('chunkIndex', chunkIndex.toString())
-    // chunks[index].uploaded = true // 标记为已上传
-    await fetch('/api/file/upload', {
-      method: 'POST',
-      body: fromData,
-    })
+    fromData.append('chunkBlob', chunkBlob || '')
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 30000)
+    try {
+      const res = await fetch('/api/file/upload', {
+        method: 'POST',
+        body: fromData,
+        signal: controller.signal,
+      })
+      clearTimeout(timeoutId)
+      const data = await res.json()
+      console.log('/api/file/upload:', data)
 
-    // if (chunks.every(item => item.uploaded)) {
-    //   // 如果所有切片都上传成功，合并切片
-    //   await mergeChunks(fileName)
-    // }
-    // 上传成功
+      if (res.ok) {
+        clearTimeout(timeoutId)
+        return true
+      }
+      return false
+    } catch (error) {
+      clearTimeout(timeoutId)
+      return false
+    }
   }
+
   // 获取已经上传切片的接口
   const getUploadedChunks = async (fileName: string): Promise<any> => {
     const response = await fetch(`/api/file/get-uploaded-chunks?fileName=${fileName}`)
+
     if (!response.ok) {
       throw new Error('Failed to fetch uploaded chunks')
     }

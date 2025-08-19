@@ -16,13 +16,13 @@ export interface chunkType {
 //  每个worker对应一个文件块
 //  这里的worker是一个独立的线程，不能直接访问DOM
 onmessage = async e => {
-  const { file, end, start, chunkSize, uploadedChunks } = e.data
+  const { file, end, start, chunkSize, uploadedChunksIndex } = e.data
   let doneChunk = 0
   const allChunk = end - start
 
   //   这里进行每个文件块的文件切片
   for (let index = start; index < end; index++) {
-    if (uploadedChunks.includes(index.toString())) {
+    if (uploadedChunksIndex.includes(index.toString())) {
       // 如果已经上传过了，就不需要再处理了
       doneChunk++
       postMessage({

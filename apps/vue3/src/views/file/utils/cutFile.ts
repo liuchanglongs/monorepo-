@@ -8,14 +8,8 @@ export const cutFile = (
   file: File,
   CHUNK_SIZE: number,
   THREAD_COUNT: number,
-  uploadedChunks: string[],
-  uploadChunk: (
-    chunk: chunkType,
-    fileName: string
-    // chunks: chunkType[],
-    // index: number
-  ) => Promise<any>,
-  mergeChunks: (fileName: string) => Promise<any>
+  uploadedChunksIndex: string[],
+  callBack: (chunk: chunkType, totalChunks: number, upLoadedChunks: chunkType[]) => any
 ): Promise<any> => {
   return new Promise((resolve, reject) => {
     // 已经上传完成的切片
@@ -23,7 +17,6 @@ export const cutFile = (
     let doneThreadCount = 0
     // 切片数量
     const totalChunks = Math.ceil(file.size / CHUNK_SIZE)
-    console.log('totalChunks', totalChunks)
 
     // 计算并发上传数量；每个线程需要的切片数量
     const concurrentUploads = Math.ceil(totalChunks / THREAD_COUNT)
@@ -42,27 +35,14 @@ export const cutFile = (
       }
       // 创建一个新的Worker实例,一个Worker实例对应一个文件块
       const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' })
-      worker.postMessage({ file, start, end, chunkSize: CHUNK_SIZE, uploadedChunks })
+      worker.postMessage({ file, start, end, chunkSize: CHUNK_SIZE, uploadedChunksIndex })
       // 异步的
       worker.onmessage = async e => {
         const chunk: chunkType = e.data
-        // 切片上传
-        if (!chunk.uploaded) {
-          const res = await uploadChunk(chunk, file.name)
-          upLoadedChunks.push({ ...chunk, uploaded: true })
-        } else {
-          // 该切片已经上传
-
-          upLoadedChunks.push({ ...chunk })
-        }
+        await callBack(chunk, totalChunks, upLoadedChunks)
         // 销毁线程
         if (chunk.isDoneThread) {
           worker.terminate() // 终止当前worker线程
-        }
-
-        // 全部上传完合并
-        if (totalChunks === upLoadedChunks.length) {
-          await mergeChunks(file.name)
         }
       }
       worker.onerror = error => {
