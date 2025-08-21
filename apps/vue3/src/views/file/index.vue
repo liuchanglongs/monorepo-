@@ -70,7 +70,7 @@
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), 30000)
     try {
-      const res = await fetch('/api/file/upload', {
+      const res = await fetch('/api/file/upload1', {
         method: 'POST',
         body: fromData,
         signal: controller.signal,

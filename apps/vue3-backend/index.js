@@ -14,15 +14,15 @@ app.use(express.json());
 // 挂载路由：所有以 /file 开头的请求都由 fileRoutes 处理
 app.use("/file", fileRoutes);
 
-// app.use(
-//   cors({
-//     origin: "*", // 允许所有源访问
-//     //   methods: ['GET', 'POST', 'PUT', 'DELETE'],
-//     methods: "*",
-//     //   allowedHeaders: ['Content-Type']
-//     allowedHeaders: "*",
-//   })
-// );
+app.use(
+  cors({
+    origin: "*", // 允许所有源访问
+    //   methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    methods: "*",
+    //   allowedHeaders: ['Content-Type']
+    allowedHeaders: "*",
+  })
+);
 
 const server = app.listen(port, () => {
   console.log(`服务已经启动 请访问: http://localhost:${port}`);

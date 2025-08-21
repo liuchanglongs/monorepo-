@@ -34,7 +34,7 @@ export default defineConfig({
         target: 'http://localhost:3023', // 后端服务器地址
         changeOrigin: true, // 允许跨域（关键）
         // 可选：重写路径（如果后端接口没有 /api 前缀）
-        rewrite: path => path.replace(/^\/api/, '/'),
+        rewrite: path => path.replace(/^\/api/, ''),
       },
     },
   },

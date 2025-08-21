@@ -125,7 +125,6 @@ router.get("/upload", (req, res) => {
 router.get("/get-uploaded-chunks", (req, res) => {
   let uploadedChunks = [];
   const chunksDir = path.join(UPLOAD_DIR, CHUNKDIRNAME_FN(req.query.fileName));
-  console.log("chunksDir:", chunksDir);
   //   console.log("fs.existsSync(UPLOAD_DIR):", fs.existsSync(UPLOAD_DIR));
   // 判断目录是否存在
   const isDirExists = fs.existsSync(chunksDir);
@@ -159,23 +158,44 @@ router.post("/merge", async (req, res) => {
     .sort((a, b) => a - b);
   // 找目标文件名，然后重新起名字
   const uniqueFilename = getUniqueFilename(UPLOAD_DIR, fileName);
-  // console.log("uniqueFilename", uniqueFilename);
+  console.log("uniqueFilename", uniqueFilename);
   // 开始合并文件
   const writeStream = fs.createWriteStream(
     path.join(UPLOAD_DIR, uniqueFilename)
   );
+  writeStream.on("error", (err) => {
+    console.log("err-merge::;", err);
+  });
   for (let index = 0; index < chunkFileNames.length; index++) {
     const sort = chunkFileNames[index];
     const chunkPath = path.join(chunksDir, CHUNKNAME_FN(sort));
-    const chunk = fs.readFileSync(chunkPath);
-    writeStream.write(chunk);
+    const chunk = await fsPromises.readFile(chunkPath);
+    const isWrite = writeStream.write(chunk);
+    /***
+     * Node.js 的 WriteStream 内部有一个缓冲区（内存中的临时存储区域）：
+     * 当调用 writeStream.write(chunk) 时，数据会先进入缓冲区；
+     * 缓冲区中的数据会被异步地写入磁盘（由 Node.js 底层处理）；
+     * 如果缓冲区已满（比如写入速度超过磁盘处理速度），write() 方法会返回 false，表示暂时无法接受新数据。
+     * */
+
+    if (!isWrite) {
+      console.log("写入流缓冲区满时：isWrite:", isWrite);
+      // 写入流缓冲区满时，等待drain事件
+      await new Promise((resolve) => writeStream.once("drain", resolve));
+    }
   }
-  writeStream.end();
+  await new Promise((resolve, reject) => {
+    // 监听流的"finish"事件：所有数据已写入磁盘，且流已关闭
+    writeStream.on("finish", resolve);
+    // 监听流的"error"事件：写入过程中发生错误（如磁盘满、权限不足）
+    writeStream.on("error", reject);
+    // 触发流的结束流程（此时会开始清空缓冲区数据）
+    writeStream.end();
+  });
   // 直接删除目录可能有文件,操作系统的原因,删除不掉
   // fs.rmdirSync(chunksDir); // 删除分片目录
-  // console.log("chunksDir", chunksDir);
-
   await removeDir(chunksDir);
+  console.log("chunksDir", "合并文件成功");
   res.status(200).json({ code: 200, message: "合并文件成功" });
 });
 
