@@ -30,11 +30,11 @@ export function useRequestQueue(maxConcurrent = 1) {
       console.log('queue.value:', queue.value)
       await processQueue()
     } catch (error) {
-      activeCount.value--
+      // activeCount.value--
       console.log('请求执行失败:', error)
       // 可在这里添加错误处理逻辑，如重试、记录失败任务等
       // 例如：将失败任务重新加入队列尾部（需控制重试次数）
-      addRequest(nextRequest)
+      // addRequest(nextRequest)
     }
   }
 
