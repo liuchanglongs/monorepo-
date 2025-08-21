@@ -1,5 +1,6 @@
 const path = require("path");
 const fs = require("fs");
+const fsPromises = require("fs").promises;
 
 const CHUNKDIRNAME_FN = (chunkFilename) => `${chunkFilename}_CHUNKS`;
 const CHUNKNAME_FN = (chunkIndex) => `chunk_${chunkIndex}`;
@@ -17,8 +18,27 @@ function getUniqueFilename(dir, filename) {
   return newFilename;
 }
 
+async function removeDir(dir) {
+  try {
+    const files = await fsPromises.readdir(dir);
+    for (const file of files) {
+      const filePath = path.join(dir, file);
+      const isDir = await fsPromises.lstat(filePath);
+      console.log("isDir", isDir.isDirectory());
+      if (isDir.isDirectory()) {
+        await removeDir(filePath);
+      } else {
+        await fsPromises.unlink(filePath);
+      }
+    }
+    await fsPromises.rmdir(dir);
+  } catch (error) {
+    console.log("removeDir", error);
+  }
+}
 module.exports = {
   getUniqueFilename,
   CHUNKDIRNAME_FN,
   CHUNKNAME_FN,
+  removeDir,
 };
