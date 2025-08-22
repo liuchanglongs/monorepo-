@@ -2,6 +2,16 @@
 
 ## 1.参考资料
 
+- 文档资料
+  https://juejin.cn/post/6844904055819468808
+  https://juejin.cn/post/6844904046436843527
+
+  https://juejin.cn/post/7224402365452238906
+
+  https://juejin.cn/post/7308219810302738483#heading-10
+
+  https://juejin.cn/post/7224402365452238906
+
 - 文件上传案例：
   ● https://github.com/shengxinjing/upload
   ● https://github.com/yeyan1996/file-upload
