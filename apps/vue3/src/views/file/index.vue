@@ -1,12 +1,9 @@
 <!-- 计算完一个切片就上传 -->
 <template>
   <div class="file">
-    <div>
-      输入是否卡顿：<input style="width: 240px" placeholder="Please input" @input="input" />
-    </div>
-    <h1>文件上传：启用webwork</h1>
-    <div>
+    <div class="box">
       <input type="file" @change="uploadFile" />
+      <el-progress :percentage="99.9" />
     </div>
   </div>
 </template>
@@ -15,6 +12,8 @@
   import { cutFile } from './utils/cutFile'
   import { onMounted } from 'vue'
   import { useRequestQueue } from './utils/useRequestQueue'
+
+  const format = percentage => (percentage === 100 ? 'Full' : `${percentage}%`)
   onMounted(() => {
     // 初始化一些操作
   })
@@ -37,6 +36,8 @@
         async (chunk: chunkType, totalChunks: number, upLoadedChunks: chunkType[]) => {
           // 切片上传
           if (!chunk.uploaded) {
+            console.log('切完一片')
+
             addRequest(async () => {
               const res = await uploadChunk(chunk, file.name)
               // if (!res) {
@@ -46,6 +47,7 @@
               if (totalChunks === upLoadedChunks.length) {
                 await mergeChunks(file.name)
               }
+              return res
             })
           } else {
             // 该切片已经上传
@@ -125,6 +127,11 @@
     justify-content: center;
     align-items: center;
     height: 100%;
-    background-color: #f0f0f0;
+    background-color: #ffffff;
+  }
+
+  .el-progress--line {
+    margin-bottom: 15px;
+    width: 600px;
   }
 </style>
