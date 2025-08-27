@@ -1,19 +1,29 @@
 // useRequestQueue.ts
 import { ref } from 'vue'
 import { computed } from 'vue'
+import type { chunkType } from './worker'
 
 type RequestFunction<T> = (...args: any[]) => Promise<T>
 
-interface QueueItem<T> {
-  nextRequest: RequestFunction<T>
+export interface uploadChunkProps {
+  chunk: chunkType
+  file: File
+  upLoadedChunks: any[]
+  totalChunks: number
+  CHUNK_SIZE: number
+}
+
+interface QueueItem {
+  request: RequestFunction<boolean>
+  data: uploadChunkProps
 }
 
 export function useRequestQueue(maxConcurrent = 3) {
   // 当前正在执行的请求数量
   const activeCount = ref(0)
   // 等待队列
-  const queue = ref<QueueItem<any>[]>([])
-
+  const queue = ref<QueueItem[]>([])
+  const isSuspend = ref(false)
   let tirm: any = null
   /**
    * 请求过快，node 写入本地，导致电脑cpu会瞬间飙升，这里做延时，
@@ -22,25 +32,27 @@ export function useRequestQueue(maxConcurrent = 3) {
    * 后端解决不了只能这么做了
    * */
   const processQueue = async () => {
+    // 执行队列中的下一个请求
+    // 如果达到最大并发数或队列为空，则停止处理
+    if (activeCount.value >= maxConcurrent || queue.value.length === 0) {
+      return
+    }
+
     if (tirm) clearTimeout(tirm)
     await new Promise(resolve => {
       tirm = setTimeout(async () => {
         resolve(true)
       }, 800)
     })
-    // 执行队列中的下一个请求
-    // 如果达到最大并发数或队列为空，则停止处理
-    if (activeCount.value >= maxConcurrent || queue.value.length === 0) {
-      return
-    }
+    // 从队列头部取出一个请求
+    const { data, request: nextRequest } = queue.value.shift()!
+    const controller = new AbortController()
     try {
       console.log('activeCount.value', activeCount.value)
 
-      // 从队列头部取出一个请求
-      const { nextRequest } = queue.value.shift()!
       activeCount.value++
       // 执行请求并等待完成
-      const isContinue = await nextRequest()
+      const isContinue = await nextRequest(data, controller)
       if (isContinue) {
         activeCount.value--
         // 完成后继续处理下一个请求（非递归调用，避免栈溢出）
@@ -59,11 +71,13 @@ export function useRequestQueue(maxConcurrent = 3) {
   }
 
   // 添加请求到队列
-  const addRequest = <T>(request: RequestFunction<T>, ...args: any[]) => {
+  const addRequest = (item: QueueItem) => {
     // 将请求添加到队列
-    queue.value.push({ nextRequest: request })
+    queue.value.push({ ...item })
     // 尝试处理队列
-    processQueue()
+    console.log(queue)
+
+    // processQueue()
   }
 
   // 清空队列
@@ -138,15 +152,12 @@ export const useFileUploadProgress = () => {
 
     // 计算百分比
     const getPercent = Number((Math.round((loaded / total) * 10000) / 100).toFixed(2))
-    percent.value = getPercent > 100 ? 100 : getPercent
+    percent.value = getPercent > 99.98 ? 99.98 : getPercent
 
     if (startTime.value) {
       const end = Date.now()
       const elapsedTime = (end - startTime.value) / 1000 // 秒
       if (elapsedTime > 0) {
-        console.log('elapsedTime:', elapsedTime)
-        console.log('currentLoaded:', currentLoaded)
-
         uploadSpeed.value = Math.round(currentLoaded / elapsedTime)
       }
       startTime.value = end

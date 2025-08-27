@@ -11,7 +11,9 @@
   import type { chunkType } from './utils/worker'
   import { cutFile } from './utils/cutFile'
   import { onMounted } from 'vue'
+  import type { uploadChunkProps } from './utils/useRequestQueue'
   import { useFileUploadProgress, useRequestQueue } from './utils/useRequestQueue'
+  import { ElMessage } from 'element-plus'
 
   onMounted(() => {
     // 初始化一些操作
@@ -19,7 +21,8 @@
   const CHUNK_SIZE = 1024 * 1024 * 5 // 5MB
   const THREAD_COUNT = navigator.hardwareConcurrency || 4 // 并发上传数量
   const { addRequest } = useRequestQueue()
-  const { updateProgress, percent, seed, initStartTime, reset } = useFileUploadProgress()
+  const { updateProgress, percent, seed, initStartTime, reset, markAsSuccess } =
+    useFileUploadProgress()
 
   console.log('THREAD_COUNT', THREAD_COUNT)
 
@@ -38,16 +41,18 @@
         async (chunk: chunkType, totalChunks: number, upLoadedChunks: chunkType[]) => {
           // 切片上传
           if (!chunk.uploaded) {
-            console.log('切完一片')
-
-            addRequest(async () => {
-              const res = await uploadChunk(chunk, file.name)
-              upLoadedChunks.push({ ...chunk, uploaded: true })
-              updateProgress(upLoadedChunks.length * CHUNK_SIZE, file.size, CHUNK_SIZE)
-              if (totalChunks === upLoadedChunks.length) {
-                await mergeChunks(file.name)
-              }
-              return res
+            const data: uploadChunkProps = {
+              chunk,
+              file,
+              upLoadedChunks,
+              totalChunks,
+              CHUNK_SIZE,
+            }
+            addRequest({
+              data,
+              request: async (data: uploadChunkProps, controller: AbortController) => {
+                return await uploadChunk(data, controller)
+              },
             })
           } else {
             // 该切片已经上传
@@ -62,14 +67,16 @@
     }
   }
   // 上传切片文件
-  const uploadChunk = async (chunk: chunkType, fileName: string) => {
+  const uploadChunk = async (data: uploadChunkProps, controller: AbortController) => {
+    const { file, chunk, upLoadedChunks, totalChunks, CHUNK_SIZE } = data
     const fromData = new FormData()
+    const fileName = file.name
     const { chunkBlob, chunkHash, chunkIndex } = chunk
     fromData.append('chunkHash', chunkHash || '')
     fromData.append('chunkFilename', fileName)
     fromData.append('chunkIndex', chunkIndex.toString())
     fromData.append('chunkBlob', chunkBlob || '')
-    const controller = new AbortController()
+
     const timeoutId = setTimeout(() => controller.abort(), 30000)
     try {
       const res = await fetch('/api/file/upload1', {
@@ -83,6 +90,12 @@
 
       if (res.ok) {
         clearTimeout(timeoutId)
+
+        upLoadedChunks.push({ ...chunk, uploaded: true })
+        updateProgress(upLoadedChunks.length * CHUNK_SIZE, file.size, CHUNK_SIZE)
+        if (totalChunks === upLoadedChunks.length) {
+          await mergeChunks(file.name)
+        }
         return true
       }
       return false
@@ -111,7 +124,14 @@
       },
       body: JSON.stringify({ fileName: fileName }),
     })
-    reset()
+    // reset()
+    if (response.ok) {
+      markAsSuccess()
+      ElMessage({
+        message: '上传成功',
+        type: 'success',
+      })
+    }
     console.log(response)
   }
 
