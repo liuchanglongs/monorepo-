@@ -3,7 +3,13 @@
   <div class="file">
     <div class="box">
       <input type="file" @change="uploadFile" />
-      <el-progress :percentage="percent" />{{ seed }}/s
+      <div class="progress">
+        <span class="seed">{{ seed }}/s</span>
+        <el-progress :percentage="percent" />
+        <el-icon v-if="!isSuspend && status === 1" @click="onPause"><VideoPause /></el-icon>
+        <el-icon v-if="isSuspend && status === 1" @click="onPlay"><VideoPlay /></el-icon>
+        <el-icon v-if="status === 3" @click="onRefresh"><RefreshRight /></el-icon>
+      </div>
     </div>
   </div>
 </template>
@@ -20,7 +26,7 @@
   })
   const CHUNK_SIZE = 1024 * 1024 * 5 // 5MB
   const THREAD_COUNT = navigator.hardwareConcurrency || 4 // 并发上传数量
-  const { addRequest } = useRequestQueue()
+  const { addRequest, isSuspend, cancleRequest, status, processQueue } = useRequestQueue()
   const { updateProgress, percent, seed, initStartTime, reset, markAsSuccess } =
     useFileUploadProgress()
 
@@ -86,8 +92,6 @@
       })
       clearTimeout(timeoutId)
       const data = await res.json()
-      console.log('/api/file/upload:', data)
-
       if (res.ok) {
         clearTimeout(timeoutId)
 
@@ -135,11 +139,15 @@
     console.log(response)
   }
 
-  const input = (event: Event): void => {
-    const target = event.target as HTMLInputElement
-    // ElMessage.primary(`This is a primary message: ${target.value}`)
-    console.log('input:', target.value)
+  const onPause = () => {
+    isSuspend.value = true
+    cancleRequest()
   }
+  const onPlay = () => {
+    isSuspend.value = false
+    processQueue()
+  }
+  const onRefresh = () => {}
 </script>
 <style lang="scss" scoped>
   .file {
@@ -150,9 +158,20 @@
     height: 100%;
     background-color: #ffffff;
   }
-
+  .progress {
+    display: flex;
+    align-items: center;
+    .el-icon {
+      margin-right: 6px;
+      font-size: 24px;
+      cursor: pointer;
+    }
+    .seed {
+      margin-right: 12px;
+    }
+  }
   .el-progress--line {
-    margin-bottom: 15px;
+    margin-right: 6px;
     width: 600px;
   }
 </style>

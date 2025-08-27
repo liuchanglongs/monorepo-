@@ -23,7 +23,17 @@ export function useRequestQueue(maxConcurrent = 3) {
   const activeCount = ref(0)
   // 等待队列
   const queue = ref<QueueItem[]>([])
+  // true 为暂停
   const isSuspend = ref(false)
+  /**
+   * 0:未开始上传；
+   * 1：正在上传
+   * 2：上传完成
+   * 3：上传失败
+   * */
+  const status = ref<0 | 1 | 2 | 3>(0)
+  // 存储所有控制器，用于批量取消
+  const allControllers = ref<{ queueItem: QueueItem; controller: AbortController }[]>([])
   let tirm: any = null
   /**
    * 请求过快，node 写入本地，导致电脑cpu会瞬间飙升，这里做延时，
@@ -34,7 +44,9 @@ export function useRequestQueue(maxConcurrent = 3) {
   const processQueue = async () => {
     // 执行队列中的下一个请求
     // 如果达到最大并发数或队列为空，则停止处理
-    if (activeCount.value >= maxConcurrent || queue.value.length === 0) {
+    if (queue.value.length === 0) status.value = 2
+    if (activeCount.value >= maxConcurrent || queue.value.length === 0 || isSuspend.value) {
+      console.log('----------')
       return
     }
 
@@ -45,18 +57,24 @@ export function useRequestQueue(maxConcurrent = 3) {
       }, 800)
     })
     // 从队列头部取出一个请求
-    const { data, request: nextRequest } = queue.value.shift()!
+    const queueItem = queue.value.shift()!
+    const { data, request: nextRequest } = queueItem
+    const hash = data.chunk.chunkHash!
     const controller = new AbortController()
     try {
-      console.log('activeCount.value', activeCount.value)
-
       activeCount.value++
+      allControllers.value.push({ controller, queueItem })
       // 执行请求并等待完成
       const isContinue = await nextRequest(data, controller)
       if (isContinue) {
         activeCount.value--
         // 完成后继续处理下一个请求（非递归调用，避免栈溢出）
         // console.log('queue.value:', queue.value)
+        // 清除controller
+        const oldAllControllers = [...allControllers.value]
+        allControllers.value = oldAllControllers.filter(
+          v => v.queueItem.data.chunk.chunkHash != hash
+        )
         await processQueue()
       } else {
         console.log('isContinue', isContinue)
@@ -72,17 +90,37 @@ export function useRequestQueue(maxConcurrent = 3) {
 
   // 添加请求到队列
   const addRequest = (item: QueueItem) => {
+    if ((status.value! = 1)) status.value = 1
     // 将请求添加到队列
     queue.value.push({ ...item })
     // 尝试处理队列
-    console.log(queue)
-
-    // processQueue()
+    processQueue()
   }
 
   // 清空队列
   const clearQueue = () => {
     queue.value = []
+    status.value = 0
+    isSuspend.value = false
+    activeCount.value = 0
+    allControllers.value = []
+  }
+
+  /**
+   * 清空队列并取消所有请求（包括正在执行的）
+   */
+  const cancleRequest = () => {
+    console.log('allControllers:', allControllers.value)
+
+    // 取消所有请求（包括正在执行的）
+    allControllers.value.forEach(v => {
+      const { controller, queueItem } = v
+      controller.abort()
+      // 从新添加到队列里面, 不清空queue，点击继续就不用重新计算hash
+      queue.value.push({ ...queueItem })
+    })
+    allControllers.value = []
+    activeCount.value = 0
   }
 
   return {
@@ -90,6 +128,10 @@ export function useRequestQueue(maxConcurrent = 3) {
     clearQueue,
     activeCount,
     queueLength: queue.value.length,
+    isSuspend,
+    status,
+    cancleRequest,
+    processQueue,
   }
 }
 
