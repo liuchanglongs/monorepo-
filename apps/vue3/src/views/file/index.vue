@@ -3,7 +3,7 @@
   <div class="file">
     <div class="box">
       <input type="file" @change="uploadFile" />
-      <el-progress :percentage="99.9" />
+      <el-progress :percentage="percent" />{{ seed }}/s
     </div>
   </div>
 </template>
@@ -11,15 +11,16 @@
   import type { chunkType } from './utils/worker'
   import { cutFile } from './utils/cutFile'
   import { onMounted } from 'vue'
-  import { useRequestQueue } from './utils/useRequestQueue'
+  import { useFileUploadProgress, useRequestQueue } from './utils/useRequestQueue'
 
-  const format = percentage => (percentage === 100 ? 'Full' : `${percentage}%`)
   onMounted(() => {
     // 初始化一些操作
   })
   const CHUNK_SIZE = 1024 * 1024 * 5 // 5MB
   const THREAD_COUNT = navigator.hardwareConcurrency || 4 // 并发上传数量
   const { addRequest } = useRequestQueue()
+  const { updateProgress, percent, seed, initStartTime, reset } = useFileUploadProgress()
+
   console.log('THREAD_COUNT', THREAD_COUNT)
 
   const uploadFile = async (event: Event): Promise<any> => {
@@ -28,6 +29,7 @@
     if (files && files.length > 0) {
       const file = files[0]
       const { data: uploadedChunks } = await getUploadedChunks(file.name)
+      initStartTime()
       await cutFile(
         file,
         CHUNK_SIZE,
@@ -40,10 +42,8 @@
 
             addRequest(async () => {
               const res = await uploadChunk(chunk, file.name)
-              // if (!res) {
-              //   throw Error('请求失败')
-              // }
               upLoadedChunks.push({ ...chunk, uploaded: true })
+              updateProgress(upLoadedChunks.length * CHUNK_SIZE, file.size, CHUNK_SIZE)
               if (totalChunks === upLoadedChunks.length) {
                 await mergeChunks(file.name)
               }
@@ -111,6 +111,7 @@
       },
       body: JSON.stringify({ fileName: fileName }),
     })
+    reset()
     console.log(response)
   }
 
