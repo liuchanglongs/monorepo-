@@ -110,8 +110,6 @@ export function useRequestQueue(maxConcurrent = 3) {
    * 清空队列并取消所有请求（包括正在执行的）
    */
   const cancleRequest = () => {
-    console.log('allControllers:', allControllers.value)
-
     // 取消所有请求（包括正在执行的）
     allControllers.value.forEach(v => {
       const { controller, queueItem } = v
