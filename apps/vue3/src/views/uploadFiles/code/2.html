@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>带请求控制的多文件上传器</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#3B82F6',
+                        secondary: '#10B981',
+                        danger: '#EF4444',
+                        neutral: '#64748B'
+                    }
+                }
+            }
+        }
+    </script>
+    <style type="text/tailwindcss">
+        @layer utilities {
+            .file-progress {
+                @apply h-2 bg-gray-200 rounded-full overflow-hidden;
+            }
+            .file-progress-bar {
+                @apply h-full bg-primary transition-all duration-300 ease-out;
+            }
+            .upload-item {
+                @apply p-4 border border-gray-200 rounded-lg mb-3 bg-white shadow-sm;
+            }
+        }
+    </style>
+</head>
+
+<body class="bg-gray-50 min-h-screen p-4 md:p-8">
+    <div class="max-w-4xl mx-auto">
+        <h1 class="text-2xl md:text-3xl font-bold mb-6 text-center">带请求控制的多文件上传器</h1>
+
+        <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+            <div class="flex flex-col sm:flex-row gap-4 mb-6">
+                <label for="file-upload"
+                    class="flex-1 bg-primary hover:bg-primary/90 text-white py-3 px-6 rounded-lg transition-colors cursor-pointer text-center">
+                    <i class="fa fa-file mr-2"></i>选择文件
+                </label>
+                <input type="file" id="file-upload" multiple class="hidden">
+                <button id="start-upload"
+                    class="bg-secondary hover:bg-secondary/90 text-white py-3 px-6 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                    <i class="fa fa-upload mr-2"></i>开始上传
+                </button>
+            </div>
+
+            <div id="file-list" class="space-y-4 max-h-96 overflow-y-auto pr-2">
+                <div class="text-center py-8 text-neutral border-2 border-dashed rounded-lg" id="empty-state">
+                    <i class="fa fa-folder-open-o text-4xl mb-3 opacity-40"></i>
+                    <p>未选择文件</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-white rounded-lg shadow-md p-6">
+            <h2 class="text-lg font-semibold mb-4">
+                <i class="fa fa-history mr-2 text-primary"></i>上传日志
+            </h2>
+            <div id="upload-log" class="text-sm text-gray-700 h-48 overflow-y-auto p-2 bg-gray-50 rounded"></div>
+        </div>
+    </div>
+
+    <script>
+        // 核心配置 - 重点控制上传请求的并发数
+        const CONFIG = {
+            maxGlobalUploads: 3,       // 全局最大并发上传请求数
+            maxPerFileUploads: 2,      // 单个文件的最大并发上传请求数
+            chunkSize: 2 * 1024 * 1024, // 2MB per chunk
+            uploadUrl: '/api/upload-chunk' // 上传接口地址(示例)
+        };
+
+        // 全局状态
+        const state = {
+            files: [],                  // 文件列表
+            filePools: new Map(),       // 每个文件的任务池: fileId -> { chunks, completed, uploading, ... }
+            globalActiveUploads: 0,     // 当前全局活跃上传请求数
+            isUploading: false,         // 是否正在上传中
+            uploadQueue: []             // 等待上传的任务队列
+        };
+
+        // DOM元素
+        const elements = {
+            fileInput: document.getElementById('file-upload'),
+            startButton: document.getElementById('start-upload'),
+            fileList: document.getElementById('file-list'),
+            emptyState: document.getElementById('empty-state'),
+            uploadLog: document.getElementById('upload-log')
+        };
+
+        // 初始化
+        function init() {
+            elements.fileInput.addEventListener('change', handleFileSelect);
+            elements.startButton.addEventListener('click', startUpload);
+            elements.startButton.disabled = true;
+        }
+
+        // 处理文件选择
+        function handleFileSelect(e) {
+            const files = Array.from(e.target.files);
+            if (files.length === 0) return;
+
+            elements.emptyState.classList.add('hidden');
+
+            files.forEach(file => {
+                const fileId = `file-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+                const chunks = splitFileIntoChunks(file);
+
+                // 为每个文件创建独立的任务池
+                state.filePools.set(fileId, {
+                    file: file,
+                    chunks: chunks,                // 所有切片元信息
+                    totalChunks: chunks.length,    // 总切片数
+                    completedChunks: 0,            // 已完成上传的切片数
+                    uploadingChunks: new Set(),    // 正在上传的切片索引
+                    pendingChunks: [...chunks.map(c => c.index)], // 待上传的切片索引
+                    hash: null,                    // 文件完整哈希
+                    status: 'ready'                // ready, uploading, completed, error
+                });
+
+                // 添加到文件列表
+                state.files.push({
+                    id: fileId,
+                    name: file.name,
+                    size: file.size,
+                    progress: 0
+                });
+
+                // 渲染文件项
+                renderFileItem(fileId, file.name, file.size);
+            });
+
+            elements.startButton.disabled = false;
+            elements.fileInput.value = '';
+        }
+
+        // 拆分文件为切片（仅存储元信息）
+        function splitFileIntoChunks(file) {
+            const chunks = [];
+            const totalChunks = Math.ceil(file.size / CONFIG.chunkSize);
+
+            for (let i = 0; i < totalChunks; i++) {
+                const start = i * CONFIG.chunkSize;
+                const end = Math.min(start + CONFIG.chunkSize, file.size);
+
+                chunks.push({
+                    index: i,
+                    start: start,
+                    end: end,
+                    size: end - start
+                });
+            }
+
+            return chunks;
+        }
+
+        // 渲染文件项
+        function renderFileItem(fileId, fileName, fileSize) {
+            const fileItem = document.createElement('div');
+            fileItem.id = `file-${fileId}`;
+            fileItem.className = 'upload-item';
+
+            fileItem.innerHTML = `
+                <div class="flex justify-between items-start mb-2">
+                    <div>
+                        <div class="font-medium">${fileName}</div>
+                        <div class="text-sm text-gray-500">${formatSize(fileSize)}</div>
+                    </div>
+                    <div class="text-sm" id="status-${fileId}">准备中</div>
+                </div>
+                <div class="file-progress">
+                    <div class="file-progress-bar" id="progress-${fileId}" style="width: 0%"></div>
+                </div>
+                <div class="text-xs text-gray-500 mt-2" id="details-${fileId}">
+                    等待开始上传
+                </div>
+            `;
+
+            elements.fileList.appendChild(fileItem);
+        }
+
+        // 开始上传流程
+        function startUpload() {
+            if (state.isUploading) return;
+
+            state.isUploading = true;
+            elements.startButton.disabled = true;
+            elements.startButton.innerHTML = '<i class="fa fa-spinner fa-spin mr-2"></i>上传中...';
+
+            // 初始化所有文件状态
+            state.files.forEach(file => {
+                const pool = state.filePools.get(file.id);
+                pool.status = 'uploading';
+                updateFileStatus(file.id, 0, '上传中');
+            });
+
+            // 启动上传调度
+            scheduleUploads();
+        }
+
+        // 上传调度核心逻辑 - 控制请求并发
+        function scheduleUploads() {
+            // 检查是否还有可上传的任务
+            const hasPendingTasks = Array.from(state.filePools.values()).some(pool =>
+                pool.status === 'uploading' && pool.pendingChunks.length > 0
+            );
+
+            // 如果没有待上传任务且没有活跃上传，说明全部完成
+            if (!hasPendingTasks && state.globalActiveUploads === 0) {
+                completeAllUploads();
+                return;
+            }
+
+            // 如果已达到全局最大并发数，等待
+            if (state.globalActiveUploads >= CONFIG.maxGlobalUploads) {
+                return;
+            }
+
+            // 找出可以继续上传的文件（有 pending 任务且未达单文件并发上限）
+            const eligibleFiles = Array.from(state.filePools.entries())
+                .filter(([_, pool]) =>
+                    pool.status === 'uploading' &&
+                    pool.pendingChunks.length > 0 &&
+                    pool.uploadingChunks.size < CONFIG.maxPerFileUploads
+                )
+                .sort(([_, a], [__, b]) => {
+                    // 优先处理进度落后的文件
+                    const progressA = a.completedChunks / a.totalChunks;
+                    const progressB = b.completedChunks / b.totalChunks;
+                    return progressA - progressB;
+                });
+
+            // 如果有符合条件的文件，发起上传
+            if (eligibleFiles.length > 0) {
+                const [fileId, pool] = eligibleFiles[0];
+                uploadNextChunk(fileId, pool);
+            }
+        }
+
+        // 上传文件的下一个切片
+        function uploadNextChunk(fileId, pool) {
+            // 从待上传队列中取一个切片
+            const chunkIndex = pool.pendingChunks.shift();
+            if (chunkIndex === undefined) {
+                scheduleUploads(); // 没有更多切片，继续调度
+                return;
+            }
+
+            // 更新状态
+            pool.uploadingChunks.add(chunkIndex);
+            state.globalActiveUploads++;
+            updateFileDetails(fileId, `正在上传切片 #${chunkIndex + 1}`);
+
+            // 获取切片数据
+            const chunkInfo = pool.chunks.find(c => c.index === chunkIndex);
+            const chunkData = pool.file.slice(chunkInfo.start, chunkInfo.end);
+
+            // 创建FormData
+            const formData = new FormData();
+            formData.append('fileId', fileId);
+            formData.append('chunkIndex', chunkIndex);
+            formData.append('totalChunks', pool.totalChunks);
+            formData.append('chunk', chunkData);
+            formData.append('fileName', pool.file.name);
+
+            // 模拟上传（实际项目中替换为真实接口）
+            simulateChunkUpload(formData)
+                .then(response => {
+                    if (response.success) {
+                        log(`文件 ${pool.file.name} 切片 #${chunkIndex + 1} 上传成功`);
+
+                        // 更新文件池状态
+                        pool.uploadingChunks.delete(chunkIndex);
+                        pool.completedChunks++;
+
+                        // 计算进度
+                        const progress = Math.round((pool.completedChunks / pool.totalChunks) * 100);
+                        updateFileStatus(fileId, progress, '上传中');
+
+                        // 检查当前文件是否已完成所有切片上传
+                        if (pool.completedChunks === pool.totalChunks) {
+                            pool.status = 'completed';
+                            updateFileStatus(fileId, 100, '已完成');
+                            updateFileDetails(fileId, '所有切片上传完成，正在合并文件');
+                            log(`文件 ${pool.file.name} 所有切片上传完成`);
+                        }
+                    } else {
+                        // 上传失败，将切片放回待上传队列重试
+                        pool.pendingChunks.unshift(chunkIndex);
+                        pool.uploadingChunks.delete(chunkIndex);
+                        updateFileDetails(fileId, `切片 #${chunkIndex + 1} 上传失败，将重试`);
+                        log(`文件 ${pool.file.name} 切片 #${chunkIndex + 1} 上传失败: ${response.error}`);
+                    }
+                })
+                .catch(error => {
+                    // 网络错误处理
+                    pool.pendingChunks.unshift(chunkIndex);
+                    pool.uploadingChunks.delete(chunkIndex);
+                    updateFileDetails(fileId, `切片 #${chunkIndex + 1} 网络错误，将重试`);
+                    log(`文件 ${pool.file.name} 切片 #${chunkIndex + 1} 网络错误: ${error.message}`);
+                })
+                .finally(() => {
+                    // 无论成功失败，都更新全局计数并继续调度
+                    state.globalActiveUploads--;
+                    scheduleUploads();
+                });
+        }
+
+        // 模拟切片上传（实际项目中替换为真实的fetch/axios请求）
+        function simulateChunkUpload(formData) {
+            return new Promise((resolve) => {
+                // 模拟网络延迟
+                const delay = Math.random() * 1000 + 500;
+
+                setTimeout(() => {
+                    // 模拟98%的成功率
+                    if (Math.random() > 0.02) {
+                        resolve({ success: true });
+                    } else {
+                        resolve({ success: false, error: '模拟上传失败' });
+                    }
+                }, delay);
+            });
+        }
+
+        // 所有上传完成后的处理
+        function completeAllUploads() {
+            log('所有文件上传完成！');
+            state.isUploading = false;
+            elements.startButton.innerHTML = '<i class="fa fa-upload mr-2"></i>开始上传';
+            elements.startButton.disabled = false;
+
+            // 检查是否有失败的文件
+            const failedFiles = Array.from(state.filePools.values())
+                .filter(pool => pool.status !== 'completed');
+
+            if (failedFiles.length === 0) {
+                alert('所有文件上传成功！');
+            } else {
+                alert(`上传完成，但有 ${failedFiles.length} 个文件上传失败，请重试。`);
+            }
+        }
+
+        // 更新文件状态显示
+        function updateFileStatus(fileId, progress, statusText) {
+            const progressBar = document.getElementById(`progress-${fileId}`);
+            const statusElem = document.getElementById(`status-${fileId}`);
+
+            if (progressBar) progressBar.style.width = `${progress}%`;
+            if (statusElem) {
+                statusElem.textContent = statusText;
+
+                // 设置状态颜色
+                if (statusText === '已完成') {
+                    statusElem.className = 'text-sm text-green-600';
+                } else if (statusText.includes('失败')) {
+                    statusElem.className = 'text-sm text-red-600';
+                } else {
+                    statusElem.className = 'text-sm text-blue-600';
+                }
+            }
+
+            // 更新文件列表中的进度
+            const file = state.files.find(f => f.id === fileId);
+            if (file) file.progress = progress;
+        }
+
+        // 更新文件详情
+        function updateFileDetails(fileId, details) {
+            const detailsElem = document.getElementById(`details-${fileId}`);
+            if (detailsElem) detailsElem.textContent = details;
+        }
+
+        // 日志工具
+        function log(message) {
+            const logEntry = document.createElement('div');
+            logEntry.className = 'mb-1 border-b border-gray-100 pb-1';
+            logEntry.innerHTML = `<span class="text-gray-500">[${new Date().toLocaleTimeString()}]</span> ${message}`;
+
+            elements.uploadLog.appendChild(logEntry);
+            elements.uploadLog.scrollTop = elements.uploadLog.scrollHeight;
+        }
+
+        // 格式化文件大小
+        function formatSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+        }
+
+        // 初始化
+        document.addEventListener('DOMContentLoaded', init);
+    </script>
+</body>
+
+</html>

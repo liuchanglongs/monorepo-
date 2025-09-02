@@ -1,24 +1,33 @@
-export type fileIdType = string | number
+export type fileIdType = string
 
-export interface chunkType {
+export interface comChunkType {
   // 开始的size
-  chunkStart?: number
+  chunkStart: number
   // 结束的size
-  chunkEnd?: number
+  chunkEnd: number
   // 第几个切片
   chunkIndex: number
-  chunkHash?: string
+}
+
+export interface chunkType extends comChunkType {
+  chunkHash: string
+  //   后续优化：不要
+  // chunkBlob?: Blob
+  uploaded: boolean // 是否上传过
+  // fileId: fileIdType
+  // name?: string
+  // size?: string
+}
+
+export interface taskChunkType extends comChunkType {
   //   后续优化：不要
   chunkBlob?: Blob
-  uploaded: boolean // 是否上传过
-  fileId: fileIdType
-  name?: string
-  size?: string
 }
 
 export interface fileInfoType {
   id: fileIdType
   file: File
+  // pending:准备状态；uploading：上传状态
   status: 'pending' | 'uploading' | 'paused' | 'completed' | 'error'
   progress: number
   seed: number

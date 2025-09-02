@@ -1,6 +1,7 @@
 <!-- 计算完一个切片就上传 -->
 <template>
   <div class="file">
+    <h1>多个文件上传</h1>
     <div class="box">
       <input type="file" @change="uploadFile" multiple />
       <div class="progress" v-for="info in fileList">
@@ -15,21 +16,23 @@
 </template>
 <script setup lang="ts">
   import { onUnmounted, ref } from 'vue'
-  import type { chunkType, fileIdType, fileInfoType, workersType } from './type'
+  import type { chunkType, fileIdType, fileInfoType, taskChunkType, workersType } from './type'
   import { onMounted } from 'vue'
 
   const CHUNK_SIZE = 1024 * 1024 * 5 // 5MB
+  const THREAD_COUNT = 2
+  const uploadNumber = 1
+
   const fileList = ref<fileInfoType[]>([])
   // 开启的线程
   const workers = ref<workersType[]>([])
-  // 文件切片队列
-  const fileTaskQueue = ref<Map<fileIdType, chunkType[]>>(new Map())
+  // 文件切片任务池
+  const fileTaskPool = ref<{ [id: string]: taskChunkType[] }>({})
 
   onMounted(() => {
     //  启动web worker
     // const THREAD_COUNT = navigator.hardwareConcurrency || 2
     // 先默认给两个,一个文件
-    const THREAD_COUNT = 2
     const data: workersType[] = []
     for (let index = 0; index < THREAD_COUNT; index++) {
       const worker = new Worker(new URL('./utils/worker.ts', import.meta.url), { type: 'module' })
@@ -49,7 +52,7 @@
       const data: fileInfoType[] = Array.from(files).map((file, index) => {
         const totalChunks = Math.ceil(file.size / CHUNK_SIZE)
         return {
-          id: index,
+          id: file.name + index,
           file,
           status: 'pending',
           progress: 0,
@@ -59,12 +62,66 @@
         }
       })
       fileList.value = data
-      // 开始根据work数量进行分配调度
-      const number = workers.value.length
-      for (let index = 0; index < number; index++) {
-        const worker = workers.value[index]
-        const { file, id } = fileList.value[index]
+
+      // uploadNumber 与 THREAD_COUNT 算出同时上传个数： uploadNumber> THREAD_COUNT?
+      //  workers 应该记录处理文件的id。 切好的chunk单独一个pool保存
+      for (let index = 0; index < THREAD_COUNT; index++) {
+        if (index + 1 > data.length) {
+          return
+        }
+        const { worker } = workers.value[index]
+        const { file, id, totalChunks } = fileList.value[index]
+        createFileTaskPool(file, id, totalChunks)
+        // 更新信息
+        workers.value[index].isBusy = true
+        fileList.value[index].worker = worker
+        assignTaskToWorker(id)
       }
+    }
+  }
+  // 为文件创建任务池
+  const createFileTaskPool = (file: File, fileId: string, totalChunks: number) => {
+    const chunk: taskChunkType[] = []
+    const size = file.size
+    for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+      const chunkStart = chunkIndex * CHUNK_SIZE
+      let chunkEnd = (chunkIndex + 1) * CHUNK_SIZE
+      if (chunkEnd > size) {
+        chunkEnd = size
+      }
+      chunk.push({
+        chunkIndex,
+        chunkStart,
+        chunkEnd,
+      })
+    }
+    fileTaskPool.value[fileId] = chunk
+  }
+
+  // 给 webworker 分配任务
+  const assignTaskToWorker = (fileId: string) => {
+    const task = fileTaskPool.value[fileId]
+    const index = fileList.value.findIndex(v => v.id === fileId)
+    const { file, worker } = fileList.value[index]
+
+    if (task.length && worker) {
+      const taskItem: taskChunkType = fileTaskPool.value[fileId].shift()!
+      const { chunkStart, chunkEnd } = taskItem
+      worker.postMessage({ ...taskItem, chunkBlob: file.slice(chunkStart, chunkEnd) })
+      // 异步的
+      worker.onmessage = async e => {
+        assignTaskToWorker(fileId)
+        const chunk: chunkType = e.data
+        fileList.value[index].chunks.push(chunk)
+
+        // await callBack(chunk, totalChunks, upLoadedChunks)
+        // // 销毁线程
+        // if (chunk.isDoneThread) {
+        //   worker.terminate() // 终止当前worker线程
+        // }
+      }
+    } else {
+      console.log('该线程处理完', fileList.value)
     }
   }
 </script>
