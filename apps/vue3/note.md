@@ -211,7 +211,45 @@ if (start >= end) {
 - 等待队列queue、当前正在执行的请求数量activeCount
 - 执行队列中的下一个请求、添加请求到队列addRequest、清空队列clearQueue
 
-# 还没有实现 2. 进度条、暂停 3. 上传了一部分，下次上传，这部分秒传
+### 秒传
+
+&emsp;&emsp;上传了一部分切片，下次上传，这部分不用计算hash、不用调用上传接口。
+
+- 一种方案：自己上传的单个文件，上传的切片部分，不用计算hash，下次上传，不用调用上传接口
+- 另外一种方案：别人上传的切片，可能跟你一样。先验证hash是否存在，存在就不用上传
+
+### 进度条
+
+&emsp;&emsp;已上传的切片数/总切片数，最多到 99.8%。 合并成功就是百分之百
+
+### 暂停
+
+&emsp;&emsp;这个切片在上传中，要取消这个请求。
+
+### 重启
+
+&emsp;&emsp;暂停后继续上传
+
+### 上传速度
+
+&emsp;&emsp; 切片上传的开始时间/结束时间
+
+````js
+if (startTime.value) {
+      const end = Date.now()
+      const elapsedTime = (end - startTime.value) / 1000 // 秒
+      if (elapsedTime > 0) {
+        uploadSpeed.value = Math.round(currentLoaded / elapsedTime)
+      }
+      startTime.value = end
+    }
+
+ const seed = computed(() => formatFileSize(uploadSpeed.value))
+``
+
+### 秒传
+
+3. 上传了一部分，下次上传，这部分秒传
 
 # 后端搭建
 
@@ -227,7 +265,7 @@ if (start >= end) {
   "devDependencies": {
     "nodemon": "^3.1.10"
   }
-```
+````
 
 ## 一些理解
 

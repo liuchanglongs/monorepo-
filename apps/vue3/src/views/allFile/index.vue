@@ -1,6 +1,7 @@
 <!-- 所有的线程hash计算完在上传 -->
 <template>
   <div class="file">
+    <h1>测试文件在主线程处理是否卡顿</h1>
     <div>
       输入是否卡顿：<input style="width: 240px" placeholder="Please input" @input="input" />
     </div>

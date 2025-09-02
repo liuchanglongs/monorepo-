@@ -1,6 +1,7 @@
 <!-- 计算完一个切片就上传 -->
 <template>
   <div class="file">
+    <h1>单个大文件上传</h1>
     <div class="box">
       <input type="file" @change="uploadFile" />
       <div class="progress">
