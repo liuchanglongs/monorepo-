@@ -32,7 +32,9 @@ export interface fileInfoType {
   progress: number
   seed: number
   //   切片完成的数据
-  chunks: chunkType[]
+  // chunks: chunkType[]
+  // 已经上传的数量
+  uploadedTotal: number
   // 总切片数
   totalChunks: number
 }
