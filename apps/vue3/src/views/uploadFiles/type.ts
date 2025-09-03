@@ -35,13 +35,13 @@ export interface fileInfoType {
   chunks: chunkType[]
   // 总切片数
   totalChunks: number
-  // 当前处理的worker
-  worker?: Worker
 }
 
 export interface workersType {
   worker: Worker
   isBusy: Boolean
+  //  当前处理的文件列表
+  handleFile?: string[]
 }
 
 // export interface uploadListType {
