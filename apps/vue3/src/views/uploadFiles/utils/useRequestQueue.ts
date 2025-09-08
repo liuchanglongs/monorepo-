@@ -1,8 +1,7 @@
 // useRequestQueue.ts
 import { ref, type Ref } from 'vue'
 import { computed } from 'vue'
-import type { chunkType } from './worker'
-import type { taskChunkType } from '../type'
+import type { taskChunkType, chunkType, fileInfoType } from '../type'
 
 type RequestFunction<T> = (...args: any[]) => Promise<T>
 
@@ -24,23 +23,33 @@ interface QueueItem {
  * @param maxConcurrent 最大并发数
  * */
 export function useRequestQueue(
-  uploadCunkPool: Ref<{ [id: string]: taskChunkType[] }>,
+  uploadCunkPool: Ref<{ [id: string]: chunkType[] }>,
+  fileList: Ref<fileInfoType[]>,
+  uploadChunk: (fileId: string, controller: AbortController) => Promise<any>,
   maxConcurrent = 3
 ) {
   // 正在上传的文件请求数量的分配
-  const activeConfig = ref<{ [key: string]: number }>({})
+  const activeConfig = ref<{ [key: string]: { total: number; pending: number } }>({})
   // 当前正在执行的请求数量
-  const activeCount = computed(() => {
+  const activeCountInfo = computed(() => {
     const comfig = activeConfig.value
     const keys = Object.keys(comfig)
-    if (keys.length === 0) return 0
-    let count = 0
+    let activeCount = 0
+    let all = 0
+    if (keys.length === 0) return { activeCount, all }
+
     keys.forEach(key => {
-      const number = comfig[key]
-      count = count + number
+      const { pending, total } = comfig[key]
+      activeCount = activeCount + pending
+      all = all + total
     })
-    return count
+    /**
+     * activeCount: 当前正在执行的请求数量
+     * all: 当前分配的总请求数量
+     * */
+    return { activeCount, all }
   })
+
   // 存储所有控制器，用于批量取消
   const allControllers = ref<{ fileId: string; controller: AbortController }[]>([])
 
@@ -53,89 +62,137 @@ export function useRequestQueue(
    * 3. 文件合并完成后，，分配给其它文件
    * */
   const assignFileRequest = (fileId?: string) => {
+    const { activeCount, all } = activeCountInfo.value
     if (fileId) {
-      activeConfig.value[fileId] = 1
+      activeConfig.value[fileId] = { total: 1, pending: 0 }
     } else {
       // 分配剩余请求
-      const number = maxConcurrent - activeCount.value
-      if (activeCount.value < maxConcurrent && number > 0) {
+      // 剩余请求数
+      const number = maxConcurrent - all
+      if (activeCount < maxConcurrent && number > 0) {
+        const pendingFile = fileList.value.filter(v => v.status === 'uploading')
+        const sortData = pendingFile.sort((a, b) => b.file.size - a.file.size)
+        if (sortData.length) {
+          const { id: fileId } = sortData[0]
+          const num = activeConfig.value[fileId].total || 0
+          activeConfig.value[fileId].total = num + number
+        }
       }
     }
   }
 
-  // const releaseFileRequest = (fileId: string) => {
-  //   if (activeConfig.value[fileId]) {
-  //     activeConfig.value[fileId] = activeConfig.value[fileId] - 1
-  //     if (activeConfig.value[fileId] < 0) {
-  //       activeConfig.value[fileId] = 0
-  //     }
-  //   }
-  // }
-
-  // // 等待队列
-  // const queue = ref<QueueItem[]>([])
-  // true 为暂停
-  // const isSuspend = ref(false)
   /**
-   * 0:未开始上传；
-   * 1：正在上传
-   * 2：上传完成
-   * 3：上传失败
+   * 1. 切完片后，调用 processQueue()
+   * 2. processQueue() 会根据 activeConfig 和 uploadCunkPool 来决定上传多少个切片
+   * 3. 每次上传完成后，更新 activeConfig.pending，并再次调用 processQueue() 继续上传
+   * 4.  直到 每个的 uploadCunkPool 为空且 activeConfig.pending 为0，表示这个文件上传完成
+   * 5.  processQueue() 会继续为其它文件分配请求，直到所有文件上传完成。所有的pending 都为0，uploadCunkPool的key为空 结束调用
    * */
-  // const status = ref<0 | 1 | 2 | 3>(0)
 
-  // let tirm: any = null
-  /**
-   * 请求过快，node 写入本地，导致电脑cpu会瞬间飙升，这里做延时，
-   * 可能导致每次只发出一个；
-   * 原因是：800内请求完成，然后下一个，所以就是一个一个的发。
-   * 后端解决不了只能这么做了
-   * */
-  const processQueue = async (fileId: string) => {
-    // 执行队列中的下一个请求
-    // 如果达到最大并发数或队列为空，则停止处理
-    if (queue.value.length === 0) status.value = 2
-    if (activeCount.value >= maxConcurrent || queue.value.length === 0 || isSuspend.value) {
-      console.log('----------')
+  const processQueue = async () => {
+    const fileIds = Object.keys(activeConfig.value)
+    if (activeCountInfo.value.activeCount >= maxConcurrent) {
+      console.log('请求已经满额，等待中...')
       return
     }
 
-    if (tirm) clearTimeout(tirm)
-    await new Promise(resolve => {
-      tirm = setTimeout(async () => {
-        resolve(true)
-      }, 800)
-    })
-    // 从队列头部取出一个请求
-    const queueItem = queue.value.shift()!
-    const { data, request: nextRequest } = queueItem
-    const hash = data.chunk.chunkHash!
-    const controller = new AbortController()
-    try {
-      activeCount.value++
-      allControllers.value.push({ controller, queueItem })
-      // 执行请求并等待完成
-      const isContinue = await nextRequest(data, controller)
-      if (isContinue) {
-        activeCount.value--
-        // 完成后继续处理下一个请求（非递归调用，避免栈溢出）
-        // console.log('queue.value:', queue.value)
-        // 清除controller
-        const oldAllControllers = [...allControllers.value]
-        allControllers.value = oldAllControllers.filter(
-          v => v.queueItem.data.chunk.chunkHash != hash
-        )
-        await processQueue()
-      } else {
-        console.log('isContinue', isContinue)
-      }
-    } catch (error) {
-      // activeCount.value--
-      console.log('请求执行失败:', error)
-      // 可在这里添加错误处理逻辑，如重试、记录失败任务等
-      // 例如：将失败任务重新加入队列尾部（需控制重试次数）
-      // addRequest(nextRequest)
+    if (activeCountInfo.value.activeCount === 0 && Object.keys(uploadCunkPool.value).length === 0) {
+      console.log('全部上传完成')
+      return
     }
+    const queueRequest = []
+
+    for (let i = 0; i < fileIds.length; i++) {
+      const fileId = fileIds[i]
+      const { pending, total } = activeConfig.value[fileId]
+      const queue = uploadCunkPool.value[fileId]
+      const queueLength = queue?.length || 0
+      const curPending = total - pending
+      const requestNumber = queueLength > curPending ? curPending : queueLength
+      console.log(fileId, requestNumber)
+      if (requestNumber <= 0) {
+        console.log('不发起请求，不能作为当前文件结束，请求速度大于切片hash计算速度，也可能为0')
+        continue
+      }
+      for (let index = 0; index < requestNumber; index++) {
+        //  queueItem.push(uploadCunkPool.value[fileId].shift()!)
+        const controller = new AbortController()
+        queueRequest.push(() => uploadChunk(fileId, controller))
+      }
+      activeConfig.value[fileId].pending = activeConfig.value[fileId].pending + requestNumber
+    }
+    if (!queueRequest.length) {
+      console.log('无请求')
+      return
+    }
+    /**
+     * 同时请求所有的该发的请求
+     * 一般只有一个，但是网络波动的时候可能有多个
+     * */
+    const result: { fileId: string; done: Boolean }[] = await Promise.all(
+      queueRequest.map(fn => fn())
+    )
+    console.log('uploadCunkPool', uploadCunkPool.value)
+    console.log('activeConfig', activeConfig.value)
+    console.log('result', result)
+    console.log('---------------------------------')
+    debugger
+    for (let index = 0; index < result.length; index++) {
+      const { fileId, done } = result[index]
+      // 更新当前文件的活跃请求数
+      activeConfig.value[fileId].pending = activeConfig.value[fileId].pending - 1
+      const { totalChunks, uploadedTotal } = fileList.value.find(v => v.id === fileId)!
+      if (totalChunks === uploadedTotal) {
+        if (uploadCunkPool.value[fileId].length === 0) delete uploadCunkPool.value[fileId]
+        if (activeConfig.value[fileId]?.pending === 0) delete activeConfig.value[fileId]
+      }
+    }
+
+    // // 继续调用
+    await processQueue()
+
+    // if (
+    //   activeCount.value >= maxConcurrent ||
+    //   (config && config.pending >= config.total) ||
+    //   !queue?.length
+    // ) {
+    //   console.log('-------activeCount--->', activeCount)
+    //   console.log('-------config--->', config)
+    //   return
+    // }
+
+    // // 更新当前文件的活跃请求数
+    // activeConfig.value[fileId].pending = pending + res.length
+    // // 继续处理下一个请求（非递归调用，避免栈溢出）
+    // await processQueue(fileId)
+    // const { data, request: nextRequest } = queueItem
+    // const hash = data.chunk.chunkHash!
+    // const controller = new AbortController()
+    // try {
+    //   activeCount.value++
+    //   allControllers.value.push({ controller, queueItem })
+    //   // 执行请求并等待完成
+    //   const isContinue = await nextRequest(data, controller)
+    //   if (isContinue) {
+    //     activeCount.value--
+    //     // 完成后继续处理下一个请求（非递归调用，避免栈溢出）
+    //     // console.log('queue.value:', queue.value)
+    //     // 清除controller
+    //     const oldAllControllers = [...allControllers.value]
+    //     allControllers.value = oldAllControllers.filter(
+    //       v => v.queueItem.data.chunk.chunkHash != hash
+    //     )
+    //     await processQueue()
+    //   } else {
+    //     console.log('isContinue', isContinue)
+    //   }
+    // } catch (error) {
+    //   // activeCount.value--
+    //   console.log('请求执行失败:', error)
+    //   // 可在这里添加错误处理逻辑，如重试、记录失败任务等
+    //   // 例如：将失败任务重新加入队列尾部（需控制重试次数）
+    //   // addRequest(nextRequest)
+    // }
   }
 
   // 清空队列
@@ -165,12 +222,13 @@ export function useRequestQueue(
   return {
     assignFileRequest,
     clearQueue,
-    activeCount,
+    // activeCount,
     // queueLength: queue.value.length,
     // isSuspend,
     status,
     cancleRequest,
     processQueue,
+    activeConfig,
   }
 }
 

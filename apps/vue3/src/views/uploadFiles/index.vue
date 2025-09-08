@@ -1,7 +1,7 @@
 <!-- 计算完一个切片就上传 -->
 <template>
   <div class="file">
-    <h1>多个文件上传</h1>
+    <h1 @click="getData">多个文件上传</h1>
     <div class="box">
       <input type="file" @change="uploadFile" multiple />
       <div>
@@ -40,7 +40,6 @@
   const fileTaskPool = ref<{ [id: string]: taskChunkType[] }>({})
   // 上传切片任务池
   const uploadCunkPool = ref<{ [id: string]: chunkType[] }>({})
-  const { processQueue, assignFileRequest } = useRequestQueue(uploadCunkPool)
 
   onMounted(() => {
     //  启动web worker
@@ -59,6 +58,79 @@
     workers.value.forEach(v => v.worker.terminate())
     workers.value = []
   })
+
+  const getData = () => {
+    console.log('fileList', fileList.value)
+    console.log('uploadCunkPool', uploadCunkPool.value)
+    console.log('fileTaskPool', fileTaskPool.value)
+  }
+
+  // 上传切片文件
+  const uploadChunk = async (fileId: string, controller: AbortController) => {
+    const fileInfoIndex = fileList.value.findIndex(v => v.id === fileId)
+    console.log('fileInfoIndex', fileInfoIndex, fileList.value)
+
+    const { file } = fileList.value[fileInfoIndex]
+    const chunk = uploadCunkPool.value[fileId].shift()!
+    const { chunkStart, chunkEnd, chunkHash, chunkIndex } = chunk
+
+    const fromData = new FormData()
+    const fileName = file.name
+    const chunkBlob = file.slice(chunkStart, chunkEnd)
+    fromData.append('chunkHash', chunkHash)
+    fromData.append('chunkFilename', fileName)
+    fromData.append('chunkIndex', chunkIndex.toString())
+    fromData.append('chunkBlob', chunkBlob)
+
+    // // const timeoutId = setTimeout(() => controller.abort(), 60000)
+    // try {
+    //   const res = await fetch('/api/file/upload1', {
+    //     method: 'POST',
+    //     body: fromData,
+    //     signal: controller.signal,
+    //   })
+    //   // clearTimeout(timeoutId)
+    //   const data = await res.json()
+    //   if (data.code === 200) {
+    //     /**
+    //      * 为什么要重新获取？不适用外面的变量 uploadedTotal, totalChunks
+    //      * */
+    //     const { uploadedTotal, totalChunks } = fileList.value[fileInfoIndex]
+    //     const currentUploadedTotal = uploadedTotal + 1
+    //     fileList.value[fileInfoIndex].uploadedTotal = currentUploadedTotal
+
+    //     if (currentUploadedTotal === totalChunks) {
+    //       mergeChunks(fileName)
+    //     }
+    //   }
+
+    // } catch (error) {
+
+    // }
+
+    // 模拟请求
+    const { currentUploadedTotal, totalChunks } = await new Promise<{
+      currentUploadedTotal: any
+      totalChunks: any
+    }>(resolve => {
+      // setTimeout(() => {
+      const { uploadedTotal, totalChunks } = fileList.value[fileInfoIndex]
+      const currentUploadedTotal = uploadedTotal + 1
+      fileList.value[fileInfoIndex].uploadedTotal = currentUploadedTotal
+      resolve({ currentUploadedTotal, totalChunks })
+      // }, 2000)
+    })
+    if (currentUploadedTotal === totalChunks) {
+      mergeChunks(fileName, fileInfoIndex)
+    }
+    return { fileId, done: true }
+  }
+
+  const { processQueue, activeConfig, assignFileRequest } = useRequestQueue(
+    uploadCunkPool,
+    fileList,
+    uploadChunk
+  )
 
   const uploadFile = async (event: Event): Promise<any> => {
     const input = event.target as HTMLInputElement
@@ -97,6 +169,8 @@
       }
       // 分配剩余的线程
       assignWorkerFile()
+      // 分配剩余的请求
+      assignFileRequest()
     }
   }
   /***
@@ -196,8 +270,7 @@
           // 添加上传的chunk
           if (!uploadCunkPool.value[id]) uploadCunkPool.value[id] = []
           uploadCunkPool.value[id].push(chunk)
-          assignTaskToWorker(workerindex)
-          processQueue(id)
+          processQueue()
           // uploadChunk(id)
           // await callBack(chunk, totalChunks, upLoadedChunks)
         }
@@ -206,70 +279,11 @@
         // 更新当前worker的状态
         workers.value[workerindex].handleFile = undefined
         workers.value[workerindex].isBusy = false
-        assignTaskToWorker(workerindex)
       }
+      assignTaskToWorker(workerindex)
     } else {
       // 当前worker空闲，分配其它文件
       assignWorkerFile()
-    }
-  }
-
-  // 上传切片文件
-  const uploadChunk = async (fileId: string) => {
-    const controller = new AbortController()
-    const fileInfoIndex = fileList.value.findIndex(v => v.id === fileId)
-    const { file } = fileList.value[fileInfoIndex]
-    const chunk = uploadCunkPool.value[fileId].shift()!
-    const { chunkStart, chunkEnd, chunkHash, chunkIndex } = chunk
-
-    const fromData = new FormData()
-    const fileName = file.name
-    const chunkBlob = file.slice(chunkStart, chunkEnd)
-    fromData.append('chunkHash', chunkHash)
-    fromData.append('chunkFilename', fileName)
-    fromData.append('chunkIndex', chunkIndex.toString())
-    fromData.append('chunkBlob', chunkBlob)
-
-    // // const timeoutId = setTimeout(() => controller.abort(), 60000)
-    // try {
-    //   const res = await fetch('/api/file/upload1', {
-    //     method: 'POST',
-    //     body: fromData,
-    //     signal: controller.signal,
-    //   })
-    //   // clearTimeout(timeoutId)
-    //   const data = await res.json()
-    //   if (data.code === 200) {
-    //     /**
-    //      * 为什么要重新获取？不适用外面的变量 uploadedTotal, totalChunks
-    //      * */
-    //     const { uploadedTotal, totalChunks } = fileList.value[fileInfoIndex]
-    //     const currentUploadedTotal = uploadedTotal + 1
-    //     fileList.value[fileInfoIndex].uploadedTotal = currentUploadedTotal
-
-    //     if (currentUploadedTotal === totalChunks) {
-    //       mergeChunks(fileName)
-    //     }
-    //   }
-
-    // } catch (error) {
-
-    // }
-
-    // 模拟请求
-    const { currentUploadedTotal, totalChunks } = await new Promise<{
-      currentUploadedTotal: any
-      totalChunks: any
-    }>(resolve => {
-      setTimeout(() => {
-        const { uploadedTotal, totalChunks } = fileList.value[fileInfoIndex]
-        const currentUploadedTotal = uploadedTotal + 1
-        fileList.value[fileInfoIndex].uploadedTotal = currentUploadedTotal
-        resolve({ currentUploadedTotal, totalChunks })
-      }, 2000)
-    })
-    if (currentUploadedTotal === totalChunks) {
-      mergeChunks(fileName, fileInfoIndex)
     }
   }
 
