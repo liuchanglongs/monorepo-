@@ -1,7 +1,8 @@
 // useRequestQueue.ts
-import { ref } from 'vue'
+import { ref, type Ref } from 'vue'
 import { computed } from 'vue'
 import type { chunkType } from './worker'
+import type { taskChunkType } from '../type'
 
 type RequestFunction<T> = (...args: any[]) => Promise<T>
 
@@ -18,30 +19,79 @@ interface QueueItem {
   data: uploadChunkProps
 }
 
-export function useRequestQueue(maxConcurrent = 3) {
+/**
+ * @param uploadCunkPool 上传切片任务池
+ * @param maxConcurrent 最大并发数
+ * */
+export function useRequestQueue(
+  uploadCunkPool: Ref<{ [id: string]: taskChunkType[] }>,
+  maxConcurrent = 3
+) {
+  // 正在上传的文件请求数量的分配
+  const activeConfig = ref<{ [key: string]: number }>({})
   // 当前正在执行的请求数量
-  const activeCount = ref(0)
-  // 等待队列
-  const queue = ref<QueueItem[]>([])
+  const activeCount = computed(() => {
+    const comfig = activeConfig.value
+    const keys = Object.keys(comfig)
+    if (keys.length === 0) return 0
+    let count = 0
+    keys.forEach(key => {
+      const number = comfig[key]
+      count = count + number
+    })
+    return count
+  })
+  // 存储所有控制器，用于批量取消
+  const allControllers = ref<{ fileId: string; controller: AbortController }[]>([])
+
+  /**
+   * 分配给文件的最大并发数
+   * @param fileId 文件id
+   * 分配原则：
+   * 1. 每个文件至少分配一个请求
+   * 2. 剩余请求：如果当前活跃请求数小于最大并发数，则为最大的文件分配一个请求
+   * 3. 文件合并完成后，，分配给其它文件
+   * */
+  const assignFileRequest = (fileId?: string) => {
+    if (fileId) {
+      activeConfig.value[fileId] = 1
+    } else {
+      // 分配剩余请求
+      const number = maxConcurrent - activeCount.value
+      if (activeCount.value < maxConcurrent && number > 0) {
+      }
+    }
+  }
+
+  // const releaseFileRequest = (fileId: string) => {
+  //   if (activeConfig.value[fileId]) {
+  //     activeConfig.value[fileId] = activeConfig.value[fileId] - 1
+  //     if (activeConfig.value[fileId] < 0) {
+  //       activeConfig.value[fileId] = 0
+  //     }
+  //   }
+  // }
+
+  // // 等待队列
+  // const queue = ref<QueueItem[]>([])
   // true 为暂停
-  const isSuspend = ref(false)
+  // const isSuspend = ref(false)
   /**
    * 0:未开始上传；
    * 1：正在上传
    * 2：上传完成
    * 3：上传失败
    * */
-  const status = ref<0 | 1 | 2 | 3>(0)
-  // 存储所有控制器，用于批量取消
-  const allControllers = ref<{ queueItem: QueueItem; controller: AbortController }[]>([])
-  let tirm: any = null
+  // const status = ref<0 | 1 | 2 | 3>(0)
+
+  // let tirm: any = null
   /**
    * 请求过快，node 写入本地，导致电脑cpu会瞬间飙升，这里做延时，
    * 可能导致每次只发出一个；
    * 原因是：800内请求完成，然后下一个，所以就是一个一个的发。
    * 后端解决不了只能这么做了
    * */
-  const processQueue = async () => {
+  const processQueue = async (fileId: string) => {
     // 执行队列中的下一个请求
     // 如果达到最大并发数或队列为空，则停止处理
     if (queue.value.length === 0) status.value = 2
@@ -88,22 +138,13 @@ export function useRequestQueue(maxConcurrent = 3) {
     }
   }
 
-  // 添加请求到队列
-  const addRequest = (item: QueueItem) => {
-    if ((status.value! = 1)) status.value = 1
-    // 将请求添加到队列
-    queue.value.push({ ...item })
-    // 尝试处理队列
-    processQueue()
-  }
-
   // 清空队列
   const clearQueue = () => {
-    queue.value = []
-    status.value = 0
-    isSuspend.value = false
-    activeCount.value = 0
-    allControllers.value = []
+    // queue.value = []
+    // status.value = 0
+    // isSuspend.value = false
+    // activeCount.value = 0
+    // allControllers.value = []
   }
 
   /**
@@ -122,11 +163,11 @@ export function useRequestQueue(maxConcurrent = 3) {
   }
 
   return {
-    addRequest,
+    assignFileRequest,
     clearQueue,
     activeCount,
-    queueLength: queue.value.length,
-    isSuspend,
+    // queueLength: queue.value.length,
+    // isSuspend,
     status,
     cancleRequest,
     processQueue,

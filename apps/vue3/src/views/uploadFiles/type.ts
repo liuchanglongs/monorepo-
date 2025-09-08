@@ -33,7 +33,7 @@ export interface fileInfoType {
   seed: number
   //   切片完成的数据
   // chunks: chunkType[]
-  // 已经上传的数量
+  // 已经上传切片的数量
   uploadedTotal: number
   // 总切片数
   totalChunks: number
@@ -43,7 +43,7 @@ export interface workersType {
   worker: Worker
   isBusy: Boolean
   //  当前处理的文件列表
-  handleFile?: string[]
+  handleFile?: fileIdType
 }
 
 // export interface uploadListType {
