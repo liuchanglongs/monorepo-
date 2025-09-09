@@ -19,7 +19,7 @@ export function useRequestQueue(
   uploadCunkPool: Ref<{ [id: string]: chunkType[] }>,
   fileList: Ref<fileInfoType[]>,
   uploadChunk: (fileId: string, controller: AbortController) => Promise<any>,
-  workers: Ref<workersType[]>,
+  continueUpload: () => Promise<any>,
   maxConcurrent = 3
 ) {
   // 正在上传的文件请求数量的分配
@@ -68,11 +68,18 @@ export function useRequestQueue(
         const sortData = pendingFile.sort((a, b) => b.file.size - a.file.size)
         if (sortData.length) {
           const { id: fileId } = sortData[0]
+          if (!activeConfig.value[fileId]) {
+            console.log(activeConfig.value[fileId])
+            console.log(fileId, sortData)
+            debugger
+            return
+          }
           const num = activeConfig.value[fileId].total || 0
           activeConfig.value[fileId].total = num + number
         }
       }
     }
+    console.log('activeConfig-->', activeConfig.value)
   }
 
   /**
@@ -121,7 +128,7 @@ export function useRequestQueue(
       activeConfig.value[fileId].pending = activeConfig.value[fileId].pending + requestNumber
     }
     if (!queueRequest.length) {
-      console.log(fileIds, '当前无请求')
+      console.log(fileIds, '当前无请求', activeConfig.value)
       return
     }
     /**
@@ -137,16 +144,17 @@ export function useRequestQueue(
     // console.log('queueLength', queueRequest.length)
     // console.log('file', fileList.value)
     // console.log('end-----------------')
-
     // debugger
     for (let index = 0; index < result.length; index++) {
       const { fileId, done } = result[index]
       // 更新当前文件的活跃请求数
       activeConfig.value[fileId].pending = activeConfig.value[fileId].pending - 1
       const { totalChunks, uploadedTotal } = fileList.value.find(v => v.id === fileId)!
+      // 合并成功后
       if (totalChunks === uploadedTotal) {
         if (uploadCunkPool.value[fileId].length === 0) delete uploadCunkPool.value[fileId]
         if (activeConfig.value[fileId]?.pending === 0) delete activeConfig.value[fileId]
+        continueUpload()
       }
     }
 
@@ -300,21 +308,21 @@ export const useFileUploadProgress = () => {
 
   return {
     // 状态
-    percent,
-    uploadStatus,
-    errorMessage,
-    seed,
-    totalChunks,
-    uploadedChunks,
-    uploadSpeed,
-    uploadedSize,
-    totalSize,
-    initStartTime,
-    // 方法
-    reset,
-    updateProgress,
-    updateChunkProgress,
-    markAsSuccess,
-    markAsError,
+    // percent,
+    // uploadStatus,
+    // errorMessage,
+    // seed,
+    // totalChunks,
+    // uploadedChunks,
+    // uploadSpeed,
+    // uploadedSize,
+    // totalSize,
+    // initStartTime,
+    // // 方法
+    // reset,
+    // updateProgress,
+    // updateChunkProgress,
+    // markAsSuccess,
+    // markAsError,
   }
 }

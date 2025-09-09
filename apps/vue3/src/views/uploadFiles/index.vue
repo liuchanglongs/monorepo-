@@ -64,6 +64,7 @@
     console.log('fileList', fileList.value)
     console.log('uploadCunkPool', uploadCunkPool.value)
     console.log('fileTaskPool', fileTaskPool.value)
+    console.log('works', workers.value)
   }
 
   // 上传切片文件
@@ -97,20 +98,41 @@
         const { uploadedTotal, totalChunks } = fileList.value[fileInfoIndex]
         const currentUploadedTotal = uploadedTotal + 1
         fileList.value[fileInfoIndex].uploadedTotal = currentUploadedTotal
+        const getPercent = Number(
+          (Math.round((currentUploadedTotal / totalChunks) * 10000) / 100).toFixed(2)
+        )
+        fileList.value[fileInfoIndex].progress = getPercent
 
         if (currentUploadedTotal === totalChunks) {
-          mergeChunks(fileName)
+          await mergeChunks(fileName, fileId)
         }
         return { fileId, done: true }
       }
     } catch (error) {}
+  }
+  /***
+   * 开始新的文件上传：
+   * 1. 有pending状态的文件就继续处理下一个文件
+   * 2. 没有pending状态的文件表示处理完了。把剩余的线程、请求数分配
+   * */
+  const continueUpload = async () => {
+    const getFileList = fileList.value.filter(v => v.status === 'pending')
+    if (getFileList.length) {
+      const { id: fileId } = getFileList[0]
+      const fileInfoIndex = fileList.value.findIndex(v => v.id === fileId)
+      await uploadFileMiddle(fileInfoIndex)
+    }
+    // 分配剩余的线程
+    assignWorkerFile()
+    // 分配剩余的请求
+    assignFileRequest()
   }
 
   const { processQueue, assignFileRequest } = useRequestQueue(
     uploadCunkPool,
     fileList,
     uploadChunk,
-    workers
+    continueUpload
   )
 
   const uploadFile = async (event: Event): Promise<any> => {
@@ -133,20 +155,9 @@
 
       // 开始上传:至少有一个线程处理一个文件
       const count = data.length >= uploadNumber ? uploadNumber : data.length
-      for (let index = 0; index < count; index++) {
-        const { file, id, totalChunks } = fileList.value[index]
-        const { data: uploadedChunks } = await getUploadedChunks(file.name)
-        const number = uploadedChunks.length
-        // 合并文件
-        if (number == totalChunks) {
-          mergeChunks(file.name)
-          continue
-        }
-        fileList.value[index].uploadedTotal = uploadedChunks.length
 
-        createFileTaskPool(file, id, totalChunks, uploadedChunks)
-        assignFileRequest(id)
-        assignWorkerFile(id, index)
+      for (let index = 0; index < count; index++) {
+        await uploadFileMiddle(index)
       }
       // 分配剩余的线程
       assignWorkerFile()
@@ -160,7 +171,7 @@
    * 开始上传:至少有一个线程处理一个文件；合并完成后开始处理下一个文件
    * 2. 分配剩余的线程：
    * 规则：优先分配给size大的文件
-   * 3. 文件合并完成后，，分配给其它文件
+   * 3. 文件合并完成后，分配给其它文件
    * */
   const assignWorkerFile = (fileId?: fileIdType, workerIndex?: number) => {
     if (typeof workerIndex === 'number' && fileId) {
@@ -188,6 +199,7 @@
           break
         }
         const { id: fileId, totalChunks } = sortData[0]
+        // fileTaskPoolItem 不存在说明hash计算完了
         const fileTaskPoolItem = fileTaskPool.value[fileId]
         if (sortData.length && fileTaskPoolItem && fileTaskPoolItem.length) {
           const fileInfoIndex = fileList.value.findIndex(v => v.id === fileId)
@@ -260,7 +272,6 @@
           // 添加上传的chunk
           if (!uploadCunkPool.value[id]) uploadCunkPool.value[id] = []
           uploadCunkPool.value[id].push(chunk)
-
           processQueue(workerindex)
           assignTaskToWorker(workerindex)
           // uploadChunk(id)
@@ -282,7 +293,7 @@
   }
 
   // 合并切片文件
-  const mergeChunks = async (fileName: string) => {
+  const mergeChunks = async (fileName: string, fileId: string) => {
     const response = await fetch('/api/file/merge', {
       method: 'POST',
       headers: {
@@ -290,19 +301,36 @@
       },
       body: JSON.stringify({ fileName: fileName }),
     })
-
     if (response.ok) {
+      const fileInfoIndex = fileList.value.findIndex(v => v.id === fileId)
+      fileList.value[fileInfoIndex].status = 'completed'
       ElMessage({
         message: '上传成功',
         type: 'success',
       })
-
-      /***
-       * 开始新的文件上传：
-       *
-       *
-       * */
     }
+  }
+
+  const uploadFileMiddle = async (index: number) => {
+    const { file, id, totalChunks } = fileList.value[index]
+    const { data: uploadedChunks } = await getUploadedChunks(file.name)
+    const number = uploadedChunks.length
+    // 合并文件
+    if (number == totalChunks) {
+      mergeChunks(file.name, id)
+      // continuereturn
+    }
+    fileList.value[index].uploadedTotal = uploadedChunks.length
+
+    createFileTaskPool(file, id, totalChunks, uploadedChunks)
+    assignFileRequest(id)
+    const workIndex = findIdleWork()
+    assignWorkerFile(id, workIndex)
+  }
+
+  const findIdleWork = () => {
+    const workIndex = workers.value.findIndex(v => v.isBusy === false && !v.handleFile)
+    return workIndex
   }
 </script>
 <style lang="scss" scoped>

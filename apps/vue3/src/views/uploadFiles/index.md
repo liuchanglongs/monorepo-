@@ -88,7 +88,7 @@ const fileTaskPool = ref<{ [id: string]: taskChunkType[] }>({})
 - 分配 webworker, 先保证每个任务先分配一个worker
 - 空余的webworker分配给正在计算最大size的hash文件
 - 优先级机制：可以通过size、类型计算一个分数，总和不超过1.多余的web work分给它`（没做）`
-- 看`assignWorkerFile`函数
+- 具体逻辑 看`assignWorkerFile`函数
 
 ```ts
 fileInfoType中多加个类型就行
@@ -123,7 +123,7 @@ const activeConfig = ref<{ [key: string]: { total: number; pending: number } }>(
 
 - 先保证每一个上传的文件要有一个请求
 - 动态调整分配剩余请求：如果当前总活跃请求数小于最大并发数，则为最大的文件分配请求
-- 看`assignFileRequest`函数
+- 具体逻辑 看`assignFileRequest`函数
 
 ### 4. 请求逻辑：
 

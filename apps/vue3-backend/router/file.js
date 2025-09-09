@@ -74,7 +74,10 @@ router.post("/upload1", (req, res) => {
       // 将 file 这个可读流（Readable Stream）的数据 "管道" 到 writeStream 这个可写流（Writable Stream）中。
       file.pipe(writeStream);
       writeStream.on("close", () => {
-        res.status(200).json({ code: 200, message: "分片存储成功" });
+        const trim = setTimeout(() => {
+          clearTimeout(trim);
+          res.status(200).json({ code: 200, message: "分片存储成功" });
+        }, 4000);
       });
       writeStream.on("error", (error) => {
         res.status(500).json({ code: 500, message: "分片存储失败" });
