@@ -31,6 +31,8 @@
   // 启用的线程数
   const THREAD_COUNT = 2
   // 同时上传个数：必须小于等于请求线程数、批量请求数量限制
+  // 如果设计成同时上传个数 > 线程数：那么一个worker处理列表：
+  // handleFile?: fileIdType[]
   const uploadNumber = 2
 
   const fileList = ref<fileInfoType[]>([])
@@ -44,8 +46,7 @@
   onMounted(() => {
     //  启动web worker
     // const THREAD_COUNT = navigator.hardwareConcurrency || 2
-    console.log('navigator.hardwareConcurrency ', navigator.hardwareConcurrency)
-
+    // console.log('navigator.hardwareConcurrency ', navigator.hardwareConcurrency)
     // 先默认给两个,一个文件
     const data: workersType[] = []
     for (let index = 0; index < THREAD_COUNT; index++) {
@@ -68,7 +69,6 @@
   // 上传切片文件
   const uploadChunk = async (fileId: string, controller: AbortController) => {
     const fileInfoIndex = fileList.value.findIndex(v => v.id === fileId)
-    console.log('fileInfoIndex', fileInfoIndex, fileList.value)
 
     const { file } = fileList.value[fileInfoIndex]
     const chunk = uploadCunkPool.value[fileId].shift()!
@@ -81,55 +81,36 @@
     fromData.append('chunkFilename', fileName)
     fromData.append('chunkIndex', chunkIndex.toString())
     fromData.append('chunkBlob', chunkBlob)
+    const timeoutId = setTimeout(() => controller.abort(), 60000)
+    try {
+      const res = await fetch('/api/file/upload1', {
+        method: 'POST',
+        body: fromData,
+        signal: controller.signal,
+      })
+      clearTimeout(timeoutId)
+      const data = await res.json()
+      if (data.code === 200) {
+        /**
+         * 为什么要重新获取？不适用外面的变量 uploadedTotal, totalChunks
+         * */
+        const { uploadedTotal, totalChunks } = fileList.value[fileInfoIndex]
+        const currentUploadedTotal = uploadedTotal + 1
+        fileList.value[fileInfoIndex].uploadedTotal = currentUploadedTotal
 
-    // // const timeoutId = setTimeout(() => controller.abort(), 60000)
-    // try {
-    //   const res = await fetch('/api/file/upload1', {
-    //     method: 'POST',
-    //     body: fromData,
-    //     signal: controller.signal,
-    //   })
-    //   // clearTimeout(timeoutId)
-    //   const data = await res.json()
-    //   if (data.code === 200) {
-    //     /**
-    //      * 为什么要重新获取？不适用外面的变量 uploadedTotal, totalChunks
-    //      * */
-    //     const { uploadedTotal, totalChunks } = fileList.value[fileInfoIndex]
-    //     const currentUploadedTotal = uploadedTotal + 1
-    //     fileList.value[fileInfoIndex].uploadedTotal = currentUploadedTotal
-
-    //     if (currentUploadedTotal === totalChunks) {
-    //       mergeChunks(fileName)
-    //     }
-    //   }
-
-    // } catch (error) {
-
-    // }
-
-    // 模拟请求
-    const { currentUploadedTotal, totalChunks } = await new Promise<{
-      currentUploadedTotal: any
-      totalChunks: any
-    }>(resolve => {
-      // setTimeout(() => {
-      const { uploadedTotal, totalChunks } = fileList.value[fileInfoIndex]
-      const currentUploadedTotal = uploadedTotal + 1
-      fileList.value[fileInfoIndex].uploadedTotal = currentUploadedTotal
-      resolve({ currentUploadedTotal, totalChunks })
-      // }, 2000)
-    })
-    if (currentUploadedTotal === totalChunks) {
-      mergeChunks(fileName, fileInfoIndex)
-    }
-    return { fileId, done: true }
+        if (currentUploadedTotal === totalChunks) {
+          mergeChunks(fileName)
+        }
+        return { fileId, done: true }
+      }
+    } catch (error) {}
   }
 
-  const { processQueue, activeConfig, assignFileRequest } = useRequestQueue(
+  const { processQueue, assignFileRequest } = useRequestQueue(
     uploadCunkPool,
     fileList,
-    uploadChunk
+    uploadChunk,
+    workers
   )
 
   const uploadFile = async (event: Event): Promise<any> => {
@@ -158,7 +139,7 @@
         const number = uploadedChunks.length
         // 合并文件
         if (number == totalChunks) {
-          mergeChunks(file.name, index)
+          mergeChunks(file.name)
           continue
         }
         fileList.value[index].uploadedTotal = uploadedChunks.length
@@ -194,10 +175,18 @@
        * 1. 是否有多余的线程：没有就不分配
        * 2. 有：分配给正在上传的文件
        * */
+      if (Object.keys(fileTaskPool.value).length === 0) {
+        console.log('没有任务分配')
+        return
+      }
       for (let index = 0; index < workers.value.length; index++) {
         if (workers.value[index].isBusy) continue
         const pendingFile = fileList.value.filter(v => v.status === 'uploading')
         const sortData = pendingFile.sort((a, b) => b.file.size - a.file.size)
+        if (sortData.length === 0) {
+          console.log('没有正在上传的文件')
+          break
+        }
         const { id: fileId, totalChunks } = sortData[0]
         const fileTaskPoolItem = fileTaskPool.value[fileId]
         if (sortData.length && fileTaskPoolItem && fileTaskPoolItem.length) {
@@ -205,7 +194,6 @@
           workers.value[index].isBusy = true
           workers.value[index].handleFile = fileId
           fileList.value[fileInfoIndex].status = 'uploading'
-
           assignTaskToWorker(index)
         } else {
           // 这次上传完的文件处理完了：其它的文件在merge成功后会重新分配
@@ -254,9 +242,11 @@
    * */
   const assignTaskToWorker = (workerindex: number) => {
     const { isBusy, handleFile: fileId, worker } = workers.value[workerindex]
+
     if (isBusy && fileId) {
       const task = fileTaskPool.value[fileId]
-      if (task && task.length) {
+
+      if (task && task?.length) {
         const fileInfoIndex = fileList.value.findIndex(v => v.id === fileId)
         const { file } = fileList.value[fileInfoIndex]
         fileList.value[fileInfoIndex].status = 'uploading'
@@ -270,42 +260,49 @@
           // 添加上传的chunk
           if (!uploadCunkPool.value[id]) uploadCunkPool.value[id] = []
           uploadCunkPool.value[id].push(chunk)
-          processQueue()
+
+          processQueue(workerindex)
+          assignTaskToWorker(workerindex)
           // uploadChunk(id)
           // await callBack(chunk, totalChunks, upLoadedChunks)
         }
       } else {
-        delete fileTaskPool.value[fileId]
         // 更新当前worker的状态
-        workers.value[workerindex].handleFile = undefined
-        workers.value[workerindex].isBusy = false
+        if (fileTaskPool.value[fileId]) delete fileTaskPool.value[fileId]
+        if (workers.value[workerindex].handleFile) workers.value[workerindex].handleFile = undefined
+        if (workers.value[workerindex].isBusy) workers.value[workerindex].isBusy = false
+
+        assignTaskToWorker(workerindex)
       }
-      assignTaskToWorker(workerindex)
     } else {
       // 当前worker空闲，分配其它文件
+      console.log('当前worker空闲，分配其它文件')
       assignWorkerFile()
     }
   }
 
   // 合并切片文件
-  const mergeChunks = async (fileName: string, fileInfoIndex: number) => {
-    console.log('合并文件', fileName, fileList.value[fileInfoIndex])
+  const mergeChunks = async (fileName: string) => {
+    const response = await fetch('/api/file/merge', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ fileName: fileName }),
+    })
 
-    // const response = await fetch('/api/file/merge', {
-    //   method: 'POST',
-    //   headers: {
-    //     'Content-Type': 'application/json',
-    //   },
-    //   body: JSON.stringify({ fileName: fileName }),
-    // })
-    // // reset()
-    // if (response.ok) {
-    //   // markAsSuccess()
-    //   ElMessage({
-    //     message: '上传成功',
-    //     type: 'success',
-    //   })
-    // }
+    if (response.ok) {
+      ElMessage({
+        message: '上传成功',
+        type: 'success',
+      })
+
+      /***
+       * 开始新的文件上传：
+       *
+       *
+       * */
+    }
   }
 </script>
 <style lang="scss" scoped>

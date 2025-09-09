@@ -7,25 +7,6 @@ onmessage = async e => {
   const info: taskChunkType = e.data
   const chunk = await createChunk(info)
   postMessage({ ...chunk })
-  // let doneChunk = 0
-  // const allChunk = end - start
-
-  // //   这里进行每个文件块的文件切片
-  // for (let index = start; index < end; index++) {
-  //   if (uploadedChunksIndex.includes(index.toString())) {
-  //     // 如果已经上传过了，就不需要再处理了
-  //     doneChunk++
-  //     postMessage({
-  //       chunkIndex: index,
-  //       uploaded: true,
-  //       isDoneThread: doneChunk == allChunk ? true : false,
-  //     })
-  //     continue
-  //   }
-  //   const chunk = await createChunk(file, index, chunkSize)
-  //   doneChunk++
-  //   postMessage({ ...chunk, isDoneThread: doneChunk == allChunk ? true : false })
-  // }
 }
 
 // 切片处理

@@ -1,9 +1,7 @@
 // useRequestQueue.ts
 import { ref, type Ref } from 'vue'
 import { computed } from 'vue'
-import type { taskChunkType, chunkType, fileInfoType } from '../type'
-
-type RequestFunction<T> = (...args: any[]) => Promise<T>
+import type { chunkType, fileInfoType, workersType } from '../type'
 
 export interface uploadChunkProps {
   chunk: chunkType
@@ -11,11 +9,6 @@ export interface uploadChunkProps {
   upLoadedChunks: any[]
   totalChunks: number
   CHUNK_SIZE: number
-}
-
-interface QueueItem {
-  request: RequestFunction<boolean>
-  data: uploadChunkProps
 }
 
 /**
@@ -26,6 +19,7 @@ export function useRequestQueue(
   uploadCunkPool: Ref<{ [id: string]: chunkType[] }>,
   fileList: Ref<fileInfoType[]>,
   uploadChunk: (fileId: string, controller: AbortController) => Promise<any>,
+  workers: Ref<workersType[]>,
   maxConcurrent = 3
 ) {
   // 正在上传的文件请求数量的分配
@@ -82,14 +76,19 @@ export function useRequestQueue(
   }
 
   /**
-   * 1. 切完片后，调用 processQueue()
+   * 1. hash计算完就，调用 processQueue()
    * 2. processQueue() 会根据 activeConfig 和 uploadCunkPool 来决定上传多少个切片
    * 3. 每次上传完成后，更新 activeConfig.pending，并再次调用 processQueue() 继续上传
    * 4.  直到 每个的 uploadCunkPool 为空且 activeConfig.pending 为0，表示这个文件上传完成
    * 5.  processQueue() 会继续为其它文件分配请求，直到所有文件上传完成。所有的pending 都为0，uploadCunkPool的key为空 结束调用
+   * 为啥每次要执行activeConfig所有活跃的请求？
+   *  hash未计算完：一个hash计算完->processQueue调用->发起请求,请求完成->processQueue调用
+   *  hash计算完：最后一个hash计算完->processQueue调用->发起请求,请求完成->processQueue调用->发起请求,请求完成->processQueue调用
+   *  假如这里可以同时请求3个，hash计算完后，假如有两个请求差不多同时计算完，A先获取了所有的剩余请求2个，同时要发起两个。activeConfig刚好计算
+   * 完，B请求才计算requestNumber，最后!queueRequest.length为true，循环结束。那么这个时候A就要同时发起请求，这样的可能性很小
    * */
 
-  const processQueue = async () => {
+  const processQueue = async (workerindex: number) => {
     const fileIds = Object.keys(activeConfig.value)
     if (activeCountInfo.value.activeCount >= maxConcurrent) {
       console.log('请求已经满额，等待中...')
@@ -97,7 +96,7 @@ export function useRequestQueue(
     }
 
     if (activeCountInfo.value.activeCount === 0 && Object.keys(uploadCunkPool.value).length === 0) {
-      console.log('全部上传完成')
+      console.log('所有文件全部上传完成')
       return
     }
     const queueRequest = []
@@ -109,34 +108,37 @@ export function useRequestQueue(
       const queueLength = queue?.length || 0
       const curPending = total - pending
       const requestNumber = queueLength > curPending ? curPending : queueLength
-      console.log(fileId, requestNumber)
+      // console.log('------------start')
+      // console.log(fileId, requestNumber)
       if (requestNumber <= 0) {
         console.log('不发起请求，不能作为当前文件结束，请求速度大于切片hash计算速度，也可能为0')
         continue
       }
       for (let index = 0; index < requestNumber; index++) {
-        //  queueItem.push(uploadCunkPool.value[fileId].shift()!)
         const controller = new AbortController()
         queueRequest.push(() => uploadChunk(fileId, controller))
       }
       activeConfig.value[fileId].pending = activeConfig.value[fileId].pending + requestNumber
     }
     if (!queueRequest.length) {
-      console.log('无请求')
+      console.log(fileIds, '当前无请求')
       return
     }
     /**
      * 同时请求所有的该发的请求
-     * 一般只有一个，但是网络波动的时候可能有多个
      * */
     const result: { fileId: string; done: Boolean }[] = await Promise.all(
       queueRequest.map(fn => fn())
     )
-    console.log('uploadCunkPool', uploadCunkPool.value)
-    console.log('activeConfig', activeConfig.value)
-    console.log('result', result)
-    console.log('---------------------------------')
-    debugger
+    // console.log('uploadCunkPool', uploadCunkPool.value)
+    // console.log('activeConfig', activeConfig.value)
+    // console.log('result', result)
+    // console.log('workerindex:', workerindex)
+    // console.log('queueLength', queueRequest.length)
+    // console.log('file', fileList.value)
+    // console.log('end-----------------')
+
+    // debugger
     for (let index = 0; index < result.length; index++) {
       const { fileId, done } = result[index]
       // 更新当前文件的活跃请求数
@@ -149,50 +151,7 @@ export function useRequestQueue(
     }
 
     // // 继续调用
-    await processQueue()
-
-    // if (
-    //   activeCount.value >= maxConcurrent ||
-    //   (config && config.pending >= config.total) ||
-    //   !queue?.length
-    // ) {
-    //   console.log('-------activeCount--->', activeCount)
-    //   console.log('-------config--->', config)
-    //   return
-    // }
-
-    // // 更新当前文件的活跃请求数
-    // activeConfig.value[fileId].pending = pending + res.length
-    // // 继续处理下一个请求（非递归调用，避免栈溢出）
-    // await processQueue(fileId)
-    // const { data, request: nextRequest } = queueItem
-    // const hash = data.chunk.chunkHash!
-    // const controller = new AbortController()
-    // try {
-    //   activeCount.value++
-    //   allControllers.value.push({ controller, queueItem })
-    //   // 执行请求并等待完成
-    //   const isContinue = await nextRequest(data, controller)
-    //   if (isContinue) {
-    //     activeCount.value--
-    //     // 完成后继续处理下一个请求（非递归调用，避免栈溢出）
-    //     // console.log('queue.value:', queue.value)
-    //     // 清除controller
-    //     const oldAllControllers = [...allControllers.value]
-    //     allControllers.value = oldAllControllers.filter(
-    //       v => v.queueItem.data.chunk.chunkHash != hash
-    //     )
-    //     await processQueue()
-    //   } else {
-    //     console.log('isContinue', isContinue)
-    //   }
-    // } catch (error) {
-    //   // activeCount.value--
-    //   console.log('请求执行失败:', error)
-    //   // 可在这里添加错误处理逻辑，如重试、记录失败任务等
-    //   // 例如：将失败任务重新加入队列尾部（需控制重试次数）
-    //   // addRequest(nextRequest)
-    // }
+    await processQueue(workerindex)
   }
 
   // 清空队列
@@ -207,17 +166,17 @@ export function useRequestQueue(
   /**
    * 清空队列并取消所有请求（包括正在执行的）
    */
-  const cancleRequest = () => {
-    // 取消所有请求（包括正在执行的）
-    allControllers.value.forEach(v => {
-      const { controller, queueItem } = v
-      controller.abort()
-      // 从新添加到队列里面, 不清空queue，点击继续就不用重新计算hash
-      queue.value.push({ ...queueItem })
-    })
-    allControllers.value = []
-    activeCount.value = 0
-  }
+  // const cancleRequest = () => {
+  //   // 取消所有请求（包括正在执行的）
+  //   allControllers.value.forEach(v => {
+  //     const { controller, queueItem } = v
+  //     controller.abort()
+  //     // 从新添加到队列里面, 不清空queue，点击继续就不用重新计算hash
+  //     queue.value.push({ ...queueItem })
+  //   })
+  //   allControllers.value = []
+  //   activeCount.value = 0
+  // }
 
   return {
     assignFileRequest,
@@ -226,7 +185,7 @@ export function useRequestQueue(
     // queueLength: queue.value.length,
     // isSuspend,
     status,
-    cancleRequest,
+    // cancleRequest,
     processQueue,
     activeConfig,
   }

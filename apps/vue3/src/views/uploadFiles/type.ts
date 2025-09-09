@@ -11,16 +11,10 @@ export interface comChunkType {
 
 export interface chunkType extends comChunkType {
   chunkHash: string
-  //   后续优化：不要
-  // chunkBlob?: Blob
   uploaded: boolean // 是否上传过
-  // fileId: fileIdType
-  // name?: string
-  // size?: string
 }
 
 export interface taskChunkType extends comChunkType {
-  //   后续优化：不要
   chunkBlob?: Blob
 }
 
@@ -31,8 +25,7 @@ export interface fileInfoType {
   status: 'pending' | 'uploading' | 'paused' | 'completed' | 'error'
   progress: number
   seed: number
-  //   切片完成的数据
-  // chunks: chunkType[]
+
   // 已经上传切片的数量
   uploadedTotal: number
   // 总切片数
@@ -41,15 +34,8 @@ export interface fileInfoType {
 
 export interface workersType {
   worker: Worker
+  // 是否在工作
   isBusy: Boolean
   //  当前处理的文件列表
   handleFile?: fileIdType
 }
-
-// export interface uploadListType {
-//   files: fileInfoType[]
-//   // 开启的线程
-//   workers: Worker[]
-//   // 文件切片队列
-//   fileTaskQueue: fileId[]
-// }
