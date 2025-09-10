@@ -1,7 +1,14 @@
 // useRequestQueue.ts
 import { ref, type Ref } from 'vue'
 import { computed } from 'vue'
-import type { chunkType, fileInfoType, workersType } from '../type'
+import type {
+  chunkType,
+  fileInfoType,
+  updateFileSeedCallBack,
+  uploadChunkType,
+  workersType,
+} from '../type'
+import type { fileIdType } from '../type'
 
 export interface uploadChunkProps {
   chunk: chunkType
@@ -18,8 +25,9 @@ export interface uploadChunkProps {
 export function useRequestQueue(
   uploadCunkPool: Ref<{ [id: string]: chunkType[] }>,
   fileList: Ref<fileInfoType[]>,
-  uploadChunk: (fileId: string, controller: AbortController) => Promise<any>,
+  uploadChunk: (props: uploadChunkType) => Promise<any>,
   continueUpload: () => Promise<any>,
+  updateFileSeed: (requestTotal: number) => updateFileSeedCallBack,
   maxConcurrent = 3
 ) {
   // 正在上传的文件请求数量的分配
@@ -123,7 +131,14 @@ export function useRequestQueue(
       }
       for (let index = 0; index < requestNumber; index++) {
         const controller = new AbortController()
-        queueRequest.push(() => uploadChunk(fileId, controller))
+
+        queueRequest.push(() => {
+          return uploadChunk({
+            fileId,
+            controller,
+            updateFileSeedCallBack: updateFileSeed(activeConfig.value[fileId].total),
+          })
+        })
       }
       activeConfig.value[fileId].pending = activeConfig.value[fileId].pending + requestNumber
     }
@@ -134,6 +149,7 @@ export function useRequestQueue(
     /**
      * 同时请求所有的该发的请求
      * */
+
     const result: { fileId: string; done: Boolean }[] = await Promise.all(
       queueRequest.map(fn => fn())
     )
@@ -171,51 +187,17 @@ export function useRequestQueue(
     // allControllers.value = []
   }
 
-  /**
-   * 清空队列并取消所有请求（包括正在执行的）
-   */
-  // const cancleRequest = () => {
-  //   // 取消所有请求（包括正在执行的）
-  //   allControllers.value.forEach(v => {
-  //     const { controller, queueItem } = v
-  //     controller.abort()
-  //     // 从新添加到队列里面, 不清空queue，点击继续就不用重新计算hash
-  //     queue.value.push({ ...queueItem })
-  //   })
-  //   allControllers.value = []
-  //   activeCount.value = 0
-  // }
-
   return {
     assignFileRequest,
     clearQueue,
-    // activeCount,
-    // queueLength: queue.value.length,
-    // isSuspend,
-    status,
-    // cancleRequest,
     processQueue,
     activeConfig,
   }
 }
 
-export const useFileUploadProgress = () => {
-  // 上传进度百分比 (0-100)
-  const percent = ref(0)
-  // 总块数
-  const totalChunks = ref(0)
-  // 已上传块数
-  const uploadedChunks = ref(0)
-  // 上传状态：idle, uploading, success, error
-  const uploadStatus = ref<'idle' | 'uploading' | 'success' | 'error'>('idle')
-  // 错误信息
-  const errorMessage = ref('')
-
+export const useFileUploadInfo = (fileList: Ref<fileInfoType[]>) => {
   // 计算当前上传速度的辅助变量
-  const startTime = ref<number | null>(null)
-  const uploadedBytes = ref(0)
-  const totalBytes = ref(0)
-  const uploadSpeed = ref(0) // B/s
+  const startTime = ref<{ [fileId: fileIdType]: number }>({})
 
   // 格式化文件大小
   const formatFileSize = (bytes: number): string => {
@@ -224,105 +206,34 @@ export const useFileUploadProgress = () => {
     return `${(bytes / (1024 * 1024)).toFixed(2)} MB`
   }
 
-  // 已上传大小
-  const uploadedSize = computed(() => formatFileSize(uploadedBytes.value))
-
-  // 总大小
-  const totalSize = computed(() => formatFileSize(totalBytes.value))
-  const seed = computed(() => formatFileSize(uploadSpeed.value))
-
-  // 重置上传状态
-  const reset = () => {
-    percent.value = 0
-    totalChunks.value = 0
-    uploadedChunks.value = 0
-    uploadStatus.value = 'idle'
-    errorMessage.value = ''
-    startTime.value = null
-    startTime.value = null
-    uploadedBytes.value = 0
-    totalBytes.value = 0
-    uploadSpeed.value = 0
+  const updateFileProgress = (
+    fileInfoIndex: number,
+    currentUploadedTotal: number,
+    totalChunks: number
+  ) => {
+    const getPercent = Number(
+      (Math.round((currentUploadedTotal / totalChunks) * 10000) / 100).toFixed(2)
+    )
+    fileList.value[fileInfoIndex].progress = getPercent
   }
 
-  // 更新上传进度
-  const updateProgress = (loaded: number, total: number, currentLoaded: number) => {
-    // 初始化开始时间
-    // if (!startTime.value) {
-    //   totalBytes.value = total
-    //   uploadStatus.value = 'uploading'
-    // }
-
-    uploadedBytes.value = loaded
-    totalBytes.value = total
-
-    // 计算百分比
-    const getPercent = Number((Math.round((loaded / total) * 10000) / 100).toFixed(2))
-    percent.value = getPercent > 99.98 ? 99.98 : getPercent
-
-    if (startTime.value) {
+  const updateFileSeed = (requestTotal: number) => {
+    const start = Date.now()
+    let seed = 0
+    return (fileId: fileIdType, CHUNK_SIZE: number, fileInfoIndex: number) => {
       const end = Date.now()
-      const elapsedTime = (end - startTime.value) / 1000 // 秒
+      const elapsedTime = (end - start) / 1000 // 秒
       if (elapsedTime > 0) {
-        uploadSpeed.value = Math.round(currentLoaded / elapsedTime)
+        seed = Math.round((CHUNK_SIZE * requestTotal) / elapsedTime)
       }
-      startTime.value = end
-    }
-  }
+      startTime.value[fileId] = end
 
-  // 更新分块上传进度
-  const updateChunkProgress = (chunkIndex: number, total: number, name?: string) => {
-    if (totalChunks.value !== total) {
-      totalChunks.value = total
-      if (uploadStatus.value !== 'uploading') {
-        uploadStatus.value = 'uploading'
-      }
-    }
-
-    // 只更新新上传的块
-    if (chunkIndex >= uploadedChunks.value) {
-      uploadedChunks.value = chunkIndex + 1
-    }
-
-    // 计算百分比
-    percent.value = Math.round((uploadedChunks.value / totalChunks.value) * 100)
-  }
-
-  // 标记上传成功
-  const markAsSuccess = () => {
-    uploadStatus.value = 'success'
-    percent.value = 100
-  }
-
-  // 标记上传失败
-  const markAsError = (message: string) => {
-    uploadStatus.value = 'error'
-    errorMessage.value = message
-  }
-  // 初始化开始时间
-  const initStartTime = () => {
-    if (!startTime.value) {
-      startTime.value = Date.now()
+      fileList.value[fileInfoIndex].seed = formatFileSize(seed)
     }
   }
 
   return {
-    // 状态
-    // percent,
-    // uploadStatus,
-    // errorMessage,
-    // seed,
-    // totalChunks,
-    // uploadedChunks,
-    // uploadSpeed,
-    // uploadedSize,
-    // totalSize,
-    // initStartTime,
-    // // 方法
-    // reset,
-    // updateProgress,
-    // updateChunkProgress,
-    // markAsSuccess,
-    // markAsError,
+    updateFileProgress,
+    updateFileSeed,
   }
 }

@@ -10,23 +10,36 @@
           <div style="margin-left: 18px">当前处理的文件: {{ worker.handleFile || '无' }}</div>
         </div>
       </div>
-      <div class="progress" v-for="info in fileList">
-        <span class="seed">{{ info.seed }}/s</span>
+
+      <div class="progress" v-for="info in fileList" :key="info.id">
+        <span class="seed">{{ info.seed }}/S</span>
         <el-progress :percentage="info.progress" />
-        <el-icon><VideoPause /></el-icon>
-        <el-icon><VideoPlay /></el-icon>
-        <el-icon><RefreshRight /></el-icon>
+        <el-button :disabled="info.status != 'paused'" circle size="small">
+          <el-icon><VideoPause /></el-icon
+        ></el-button>
+        <el-button :disabled="info.status != 'uploading'" circle size="small">
+          <el-icon><VideoPlay /></el-icon
+        ></el-button>
+        <el-button :disabled="info.status != 'error'" circle size="small">
+          <el-icon><RefreshRight /></el-icon
+        ></el-button>
       </div>
     </div>
   </div>
 </template>
 <script setup lang="ts">
   import { onUnmounted, ref } from 'vue'
-  import type { chunkType, fileIdType, fileInfoType, taskChunkType, workersType } from './type'
+  import type {
+    chunkType,
+    fileIdType,
+    fileInfoType,
+    taskChunkType,
+    uploadChunkType,
+    workersType,
+  } from './type'
   import { onMounted } from 'vue'
   import { ElMessage } from 'element-plus'
-  import { useRequestQueue } from './utils/useRequestQueue'
-
+  import { useFileUploadInfo, useRequestQueue } from './utils/useRequestQueue'
   const CHUNK_SIZE = 1024 * 1024 * 5 // 5MB
   // 启用的线程数
   const THREAD_COUNT = 2
@@ -42,7 +55,7 @@
   const fileTaskPool = ref<{ [id: string]: taskChunkType[] }>({})
   // 上传切片任务池
   const uploadCunkPool = ref<{ [id: string]: chunkType[] }>({})
-
+  const { updateFileProgress, updateFileSeed } = useFileUploadInfo(fileList)
   onMounted(() => {
     //  启动web worker
     // const THREAD_COUNT = navigator.hardwareConcurrency || 2
@@ -68,7 +81,8 @@
   }
 
   // 上传切片文件
-  const uploadChunk = async (fileId: string, controller: AbortController) => {
+  const uploadChunk = async (props: uploadChunkType) => {
+    const { fileId, controller, updateFileSeedCallBack } = props
     const fileInfoIndex = fileList.value.findIndex(v => v.id === fileId)
 
     const { file } = fileList.value[fileInfoIndex]
@@ -98,14 +112,13 @@
         const { uploadedTotal, totalChunks } = fileList.value[fileInfoIndex]
         const currentUploadedTotal = uploadedTotal + 1
         fileList.value[fileInfoIndex].uploadedTotal = currentUploadedTotal
-        const getPercent = Number(
-          (Math.round((currentUploadedTotal / totalChunks) * 10000) / 100).toFixed(2)
-        )
-        fileList.value[fileInfoIndex].progress = getPercent
+        updateFileProgress(fileInfoIndex, currentUploadedTotal, totalChunks)
+        updateFileSeedCallBack(fileId, CHUNK_SIZE, fileInfoIndex)
 
         if (currentUploadedTotal === totalChunks) {
           await mergeChunks(fileName, fileId)
         }
+
         return { fileId, done: true }
       }
     } catch (error) {}
@@ -132,7 +145,8 @@
     uploadCunkPool,
     fileList,
     uploadChunk,
-    continueUpload
+    continueUpload,
+    updateFileSeed
   )
 
   const uploadFile = async (event: Event): Promise<any> => {
@@ -146,7 +160,7 @@
           file,
           status: 'pending',
           progress: 0,
-          seed: 0,
+          seed: '0 B',
           totalChunks,
           uploadedTotal: 0,
         }
@@ -345,11 +359,6 @@
   .progress {
     display: flex;
     align-items: center;
-    .el-icon {
-      margin-right: 6px;
-      font-size: 24px;
-      cursor: pointer;
-    }
     .seed {
       margin-right: 12px;
     }

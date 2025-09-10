@@ -24,7 +24,7 @@ export interface fileInfoType {
   // pending:准备状态；uploading：上传状态
   status: 'pending' | 'uploading' | 'paused' | 'completed' | 'error'
   progress: number
-  seed: number
+  seed: number | string
 
   // 已经上传切片的数量
   uploadedTotal: number
@@ -38,4 +38,16 @@ export interface workersType {
   isBusy: Boolean
   //  当前处理的文件列表
   handleFile?: fileIdType
+}
+
+export type updateFileSeedCallBack = (
+  fileId: string,
+  CHUNK_SIZE: number,
+  fileInfoIndex: number
+) => any
+
+export interface uploadChunkType {
+  fileId: string
+  controller: AbortController
+  updateFileSeedCallBack: updateFileSeedCallBack
 }
