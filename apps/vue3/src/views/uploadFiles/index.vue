@@ -49,7 +49,11 @@
   } from './type'
   import { onMounted } from 'vue'
   import { ElMessage } from 'element-plus'
-  import { useUpdateFileUploadInfo, useRequestQueue } from './utils/useRequestQueue'
+  import {
+    useUpdateFileUploadInfo,
+    useRequestQueue,
+    manageFileBindworkerIndex,
+  } from './utils/useRequestQueue'
   const CHUNK_SIZE = 1024 * 1024 * 5 // 5MB
   // 启用的线程数
   const THREAD_COUNT = 2
@@ -88,6 +92,7 @@
     console.log('uploadCunkPool', uploadCunkPool.value)
     console.log('fileTaskPool', fileTaskPool.value)
     console.log('works', workers.value)
+    console.log('activeConfig', activeConfig.value)
   }
 
   // 上传切片文件
@@ -134,7 +139,9 @@
 
         return { fileId, done: true, chunkHash }
       }
-    } catch (error) {}
+    } catch (error) {
+      return { fileId, done: false, chunkHash }
+    }
   }
   /***
    *
@@ -160,7 +167,7 @@
     assignFileRequest()
   }
 
-  const { processQueue, assignFileRequest, cancleRequest } = useRequestQueue(
+  const { processQueue, assignFileRequest, cancleRequest, activeConfig } = useRequestQueue(
     uploadCunkPool,
     fileList,
     uploadChunk,
@@ -215,8 +222,13 @@
       // 给worker分配处理文件片任务
       workers.value[workerIndex].isBusy = true
       workers.value[workerIndex].handleFile = fileId
-      const fileIndex = fileList.value.findIndex(v => v.id === fileId)
-      fileList.value[fileIndex].bindworkerIndex.push(workerIndex)
+
+      manageFileBindworkerIndex({
+        type: 'add',
+        fileList,
+        workerIndex,
+        fileId,
+      })
       // 执行任务
       assignTaskToWorker(workerIndex)
     } else {
@@ -245,7 +257,12 @@
           workers.value[index].isBusy = true
           workers.value[index].handleFile = fileId
           fileList.value[fileInfoIndex].status = 'uploading'
-          fileList.value[fileInfoIndex].bindworkerIndex.push(workerIndex)
+          manageFileBindworkerIndex({
+            type: 'add',
+            fileList,
+            workerIndex: index,
+            fileId,
+          })
 
           assignTaskToWorker(index)
         } else {
@@ -268,15 +285,24 @@
     uploadedChunks: string[]
   ) => {
     const chunk: taskChunkType[] = []
-    if (fileTaskPool.value[fileId]) {
-      chunk.push(...fileTaskPool.value[fileId])
-    }
     const size = file.size
+    const doneTask = []
+    // 已经完成的任务
+    if (fileTaskPool.value[fileId]) {
+      const task = fileTaskPool.value[fileId].map(v => v.chunkIndex)
+      // console.log('fileTaskPool', task)
+      doneTask.push(...task)
+    }
+    if (uploadCunkPool.value[fileId]) {
+      const task = uploadCunkPool.value[fileId].map(v => v.chunkIndex)
+      // console.log('uploadCunkPool', task)
+      doneTask.push(...task)
+    }
+    // console.log('doneTask', doneTask)
+    // console.log('uploadedChunks', uploadedChunks)
+
     for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
-      if (
-        uploadedChunks.includes(String(chunkIndex)) ||
-        chunk.some(v => v.chunkIndex == chunkIndex)
-      ) {
+      if (uploadedChunks.includes(String(chunkIndex)) || doneTask.includes(chunkIndex)) {
         continue
       }
 
@@ -291,6 +317,8 @@
         chunkEnd,
       })
     }
+    // console.log('chunk', chunk)
+    // debugger
     fileTaskPool.value[fileId] = chunk
   }
 
@@ -338,8 +366,12 @@
         if (fileTaskPool.value[fileId]) delete fileTaskPool.value[fileId]
         if (workers.value[workerindex].handleFile) workers.value[workerindex].handleFile = undefined
         if (workers.value[workerindex].isBusy) workers.value[workerindex].isBusy = false
-        const fileIndex = fileList.value.findIndex(v => v.id === fileId)
-        fileList.value[fileIndex].bindworkerIndex.push(workerindex)
+        manageFileBindworkerIndex({
+          type: 'add',
+          fileList,
+          workerIndex: workerindex,
+          fileId,
+        })
         assignTaskToWorker(workerindex)
       }
     } else {
@@ -381,17 +413,21 @@
     cancleRequest(id)
     fileList.value[fileIndex].status = 'paused'
 
+    // 解除 worker 分配
     for (let workerindex = 0; workerindex < workers.value.length; workerindex++) {
       const { isBusy, handleFile } = workers.value[workerindex]
       if (isBusy && handleFile === id) {
         workers.value[workerindex].isBusy = false
         workers.value[workerindex].handleFile = undefined
-        const bindworkerIndex = fileList.value[fileIndex].bindworkerIndex
-        fileList.value[fileIndex].bindworkerIndex = bindworkerIndex.filter(
-          index => index != workerindex
-        )
       }
     }
+    // 解除 文件绑定的worker
+    manageFileBindworkerIndex({
+      type: 'delete',
+      fileList,
+      fileId: id,
+    })
+
     continueUpload()
   }
   /**
@@ -409,14 +445,13 @@
     if (uploadingFile.length === uploadNumber) {
       fileList.value[index].status = 'pending'
     } else if (uploadNumber > uploadingFile.length) {
-      continueUpload(index)
       fileList.value[index].status = 'uploading'
+      await continueUpload(index)
+      // 开始请求
+      await processQueue()
     }
   }
-  // const bindworkerIndex = fileList.value[fileIndex].bindworkerIndex
-  //         fileList.value[fileIndex].bindworkerIndex = bindworkerIndex.filter(
-  //           index => index != workerindex
-  //         )
+
   /**
    * 开始上传暂停的文件: 特殊情况：worker全部被占用； 需要重新分配
    * */
@@ -427,26 +462,23 @@
     let maxWorkerIndex: any[] = []
     // 正要上传的文件
     let targetFile = null
-    const uploadingFileId = fileList.value.map(v => {
-      if (v.status == 'uploading' && !v.bindworkerIndex.length) {
+    fileList.value.forEach(v => {
+      if (v.status == 'pending' && !v.bindworkerIndex.length) {
         targetFile = v
-      }
-      if (v.status == 'uploading' && v.bindworkerIndex.length) {
-        if (v.bindworkerIndex.length > maxWorkerIndex.length) {
-          maxWorkerIndex = [...v.bindworkerIndex]
-        }
-
-        return v.id
+        maxWorkerIndex = [...v.bindworkerIndex]
       }
     })
-
     if (maxWorkerIndex.includes(workerindex) && targetFile) {
       const { id: targetId } = targetFile
       // 重新设置worker线程
       workers.value[workerindex].isBusy = true
       workers.value[workerindex].handleFile = targetId
-      const fileIndex = fileList.value.findIndex(v => v.id === targetId)
-      fileList.value[fileIndex].bindworkerIndex.push(workerindex)
+      manageFileBindworkerIndex({
+        type: 'add',
+        workerIndex: workerindex,
+        fileId: targetId,
+        fileList,
+      })
     }
   }
   // 文件上传中间函数

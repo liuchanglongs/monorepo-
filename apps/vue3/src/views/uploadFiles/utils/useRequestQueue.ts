@@ -170,7 +170,7 @@ export function useRequestQueue(
     )
     // console.log('uploadCunkPool', uploadCunkPool.value)
     // console.log('activeConfig', activeConfig.value)
-    // console.log('result', result)
+    console.log('result', result)
     // console.log('workerindex:', workerindex)
     // console.log('queueLength', queueRequest.length)
     // console.log('file', fileList.value)
@@ -178,6 +178,7 @@ export function useRequestQueue(
     // debugger
     for (let index = 0; index < result.length; index++) {
       const { fileId, done } = result[index]
+      if (!result[index] || !done) continue
       // 更新当前文件的活跃请求数
       activeConfig.value[fileId].pending = activeConfig.value[fileId].pending - 1
       handleStatusUploadingFile(fileId)
@@ -198,13 +199,16 @@ export function useRequestQueue(
    * 开始上传暂停的文件: 特殊情况：批量请求被全部被占用； 需要重新分配
    * */
   const handleStatusUploadingFile = (fileId: string) => {
-    const targetFile = fileList.value.map(v => {
+    let targetFile = null
+    fileList.value.forEach(v => {
       if (v.status == 'pending' && !v.bindworkerIndex.length) {
-        return v
+        targetFile = v
       }
     })
-    if (targetFile.length) {
-      const { id } = targetFile[0]!
+    console.log('targetFile', targetFile)
+    if (targetFile) {
+      const { id } = targetFile
+
       const max: any = { id: null, total: 0 }
       Object.keys(activeConfig).forEach((key: string) => {
         const { total } = activeConfig.value[key]
@@ -246,7 +250,9 @@ export function useRequestQueue(
   }
   // 取消请求分配
   const cancelActiveConfig = (fileId: string) => {
-    if (activeConfig.value[fileId]) delete uploadCunkPool.value[fileId]
+    if (activeConfig.value[fileId]) {
+      delete activeConfig.value[fileId]
+    }
   }
 
   return {
@@ -298,5 +304,25 @@ export const useUpdateFileUploadInfo = (fileList: Ref<fileInfoType[]>) => {
   return {
     updateFileProgress,
     updateFileSeed,
+  }
+}
+
+export const manageFileBindworkerIndex = (props: {
+  fileList: Ref<fileInfoType[]>
+  fileId: string
+  workerIndex?: number
+  type: 'add' | 'update' | 'delete'
+}) => {
+  const { fileList, fileId, workerIndex, type } = props
+
+  if (type === 'add') {
+    const fileIndex = fileList.value.findIndex(v => v.id === fileId)
+    if (!fileList.value[fileIndex].bindworkerIndex.includes(workerIndex)) {
+      fileList.value[fileIndex].bindworkerIndex.push(workerIndex)
+    }
+  } else if (type === 'update') {
+  } else if (type === 'delete') {
+    const fileIndex = fileList.value.findIndex(v => v.id === fileId)
+    fileList.value[fileIndex].bindworkerIndex = []
   }
 }
