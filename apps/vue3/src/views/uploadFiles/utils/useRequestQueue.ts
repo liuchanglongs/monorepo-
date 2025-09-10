@@ -1,13 +1,7 @@
 // useRequestQueue.ts
 import { ref, type Ref } from 'vue'
 import { computed } from 'vue'
-import type {
-  chunkType,
-  fileInfoType,
-  updateFileSeedCallBack,
-  uploadChunkType,
-  workersType,
-} from '../type'
+import type { chunkType, fileInfoType, updateFileSeedCallBack, uploadChunkType } from '../type'
 import type { fileIdType } from '../type'
 
 export interface uploadChunkProps {
@@ -53,18 +47,24 @@ export function useRequestQueue(
   })
 
   // 存储所有控制器，用于批量取消
-  const allControllers = ref<{ fileId: string; controller: AbortController }[]>([])
+  const allControllers = ref<{
+    [fileId: string]: { chunk: chunkType; controller: AbortController }[]
+  }>({})
 
   /**
-   * 分配给文件的最大并发数
+   * 分配给文件的最大并发数：
+   *
    * @param fileId 文件id
    * 分配原则：
-   * 1. 每个文件至少分配一个请求
-   * 2. 剩余请求：如果当前活跃请求数小于最大并发数，则为最大的文件分配一个请求
-   * 3. 文件合并完成后，，分配给其它文件
+   * 1. 剩余请求：如果当前活跃请求数小于最大并发数，则为最大的文件分配一个请求
+   * 2. 文件合并完成后，分配给其它文件
    * */
   const assignFileRequest = (fileId?: string) => {
     const { activeCount, all } = activeCountInfo.value
+    if (all >= maxConcurrent) {
+      console.log('没有多余的请求了')
+      return
+    }
     if (fileId) {
       activeConfig.value[fileId] = { total: 1, pending: 0 }
     } else {
@@ -87,7 +87,7 @@ export function useRequestQueue(
         }
       }
     }
-    console.log('activeConfig-->', activeConfig.value)
+    // console.log('activeConfig-->', activeConfig.value)
   }
 
   /**
@@ -103,7 +103,7 @@ export function useRequestQueue(
    * 完，B请求才计算requestNumber，最后!queueRequest.length为true，循环结束。那么这个时候A就要同时发起请求，这样的可能性很小
    * */
 
-  const processQueue = async (workerindex: number) => {
+  const processQueue = async () => {
     const fileIds = Object.keys(activeConfig.value)
     if (activeCountInfo.value.activeCount >= maxConcurrent) {
       console.log('请求已经满额，等待中...')
@@ -131,12 +131,27 @@ export function useRequestQueue(
       }
       for (let index = 0; index < requestNumber; index++) {
         const controller = new AbortController()
-
         queueRequest.push(() => {
           return uploadChunk({
             fileId,
             controller,
-            updateFileSeedCallBack: updateFileSeed(activeConfig.value[fileId].total),
+            callBack: {
+              updateFileSeedCallBack: updateFileSeed(activeConfig.value[fileId].total),
+              collectController: (chunk: chunkType, isCompelete?: boolean) => {
+                if (!isCompelete) {
+                  // 开始调用接口
+                  if (!allControllers.value[fileId]) {
+                    allControllers.value[fileId] = []
+                  }
+                  allControllers.value[fileId].push({ chunk, controller })
+                } else {
+                  // 接口调用完成
+                  allControllers.value[fileId] = allControllers.value[fileId].filter(
+                    v => v.chunk.chunkHash != chunk.chunkHash
+                  )
+                }
+              },
+            },
           })
         })
       }
@@ -165,6 +180,7 @@ export function useRequestQueue(
       const { fileId, done } = result[index]
       // 更新当前文件的活跃请求数
       activeConfig.value[fileId].pending = activeConfig.value[fileId].pending - 1
+      handleStatusUploadingFile(fileId)
       const { totalChunks, uploadedTotal } = fileList.value.find(v => v.id === fileId)!
       // 合并成功后
       if (totalChunks === uploadedTotal) {
@@ -175,9 +191,36 @@ export function useRequestQueue(
     }
 
     // // 继续调用
-    await processQueue(workerindex)
+    await processQueue()
   }
 
+  /**
+   * 开始上传暂停的文件: 特殊情况：批量请求被全部被占用； 需要重新分配
+   * */
+  const handleStatusUploadingFile = (fileId: string) => {
+    const targetFile = fileList.value.map(v => {
+      if (v.status == 'pending' && !v.bindworkerIndex.length) {
+        return v
+      }
+    })
+    if (targetFile.length) {
+      const { id } = targetFile[0]!
+      const max: any = { id: null, total: 0 }
+      Object.keys(activeConfig).forEach((key: string) => {
+        const { total } = activeConfig.value[key]
+        if (total) {
+          if (total > max.total) {
+            max.id = key
+            max.total = total
+          }
+        }
+      })
+      if (fileId === max.id && activeConfig.value[fileId]?.total > 1) {
+        activeConfig.value[fileId].total = activeConfig.value[fileId].total - 1
+        activeConfig.value[id] = { total: 1, pending: 0 }
+      }
+    }
+  }
   // 清空队列
   const clearQueue = () => {
     // queue.value = []
@@ -186,16 +229,36 @@ export function useRequestQueue(
     // activeCount.value = 0
     // allControllers.value = []
   }
+  /**
+   *  取消该任务的正在执行的所有请求
+   */
+  const cancleRequest = (fileId: string) => {
+    const controllers = allControllers.value[fileId]
+    if (controllers && Object.keys(controllers)?.length) {
+      Object.keys(controllers).forEach((key: any) => {
+        const { chunk, controller } = controllers[key]
+        controller.abort()
+        if (!uploadCunkPool.value[fileId]) uploadCunkPool.value[fileId] = []
+        uploadCunkPool.value[fileId].push(chunk)
+      })
+    }
+    cancelActiveConfig(fileId)
+  }
+  // 取消请求分配
+  const cancelActiveConfig = (fileId: string) => {
+    if (activeConfig.value[fileId]) delete uploadCunkPool.value[fileId]
+  }
 
   return {
     assignFileRequest,
     clearQueue,
     processQueue,
     activeConfig,
+    cancleRequest,
   }
 }
 
-export const useFileUploadInfo = (fileList: Ref<fileInfoType[]>) => {
+export const useUpdateFileUploadInfo = (fileList: Ref<fileInfoType[]>) => {
   // 计算当前上传速度的辅助变量
   const startTime = ref<{ [fileId: fileIdType]: number }>({})
 

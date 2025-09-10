@@ -1,3 +1,5 @@
+import type { Ref } from 'vue'
+
 export type fileIdType = string
 
 export interface comChunkType {
@@ -25,7 +27,8 @@ export interface fileInfoType {
   status: 'pending' | 'uploading' | 'paused' | 'completed' | 'error'
   progress: number
   seed: number | string
-
+  // 是否绑定了worker
+  bindworkerIndex: any[]
   // 已经上传切片的数量
   uploadedTotal: number
   // 总切片数
@@ -49,5 +52,8 @@ export type updateFileSeedCallBack = (
 export interface uploadChunkType {
   fileId: string
   controller: AbortController
-  updateFileSeedCallBack: updateFileSeedCallBack
+  callBack: {
+    updateFileSeedCallBack: updateFileSeedCallBack
+    collectController: (chunk: chunkType, isCompelete?: boolean) => any
+  }
 }
