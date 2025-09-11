@@ -139,7 +139,7 @@ export function useRequestQueue(
               updateFileSeedCallBack: updateFileSeed(activeConfig.value[fileId].total),
               collectController: (chunk: chunkType, isCompelete?: boolean) => {
                 if (!isCompelete) {
-                  // 开始调用接口
+                  // 开始调用接口前
                   if (!allControllers.value[fileId]) {
                     allControllers.value[fileId] = []
                   }
@@ -149,6 +149,7 @@ export function useRequestQueue(
                   allControllers.value[fileId] = allControllers.value[fileId].filter(
                     v => v.chunk.chunkHash != chunk.chunkHash
                   )
+                  console.log('接口调用完成:', allControllers.value)
                 }
               },
             },
@@ -238,14 +239,22 @@ export function useRequestQueue(
    */
   const cancleRequest = (fileId: string) => {
     const controllers = allControllers.value[fileId]
+    console.log(' 取消该任务的正在执行的所有请求:', allControllers.value)
+    console.log(' uploadCunkPool取消该任务的正在执行的所有请求:', uploadCunkPool.value)
+
     if (controllers && Object.keys(controllers)?.length) {
       Object.keys(controllers).forEach((key: any) => {
         const { chunk, controller } = controllers[key]
         controller.abort()
+        // 重新添加到 上传切片任务池
         if (!uploadCunkPool.value[fileId]) uploadCunkPool.value[fileId] = []
         uploadCunkPool.value[fileId].push(chunk)
       })
+      // 清空该收集的 Controller
+      delete allControllers.value[fileId]
     }
+    console.log(' uploadCunkPool', allControllers.value)
+
     cancelActiveConfig(fileId)
   }
   // 取消请求分配
