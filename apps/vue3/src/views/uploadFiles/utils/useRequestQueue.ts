@@ -22,6 +22,8 @@ export function useRequestQueue(
   uploadChunk: (props: uploadChunkType) => Promise<any>,
   continueUpload: () => Promise<any>,
   updateFileSeed: (requestTotal: number) => updateFileSeedCallBack,
+  uploadNumber: number,
+  getData: any,
   maxConcurrent = 3
 ) {
   // 正在上传的文件请求数量的分配
@@ -60,6 +62,8 @@ export function useRequestQueue(
    * 2. 文件合并完成后，分配给其它文件
    * */
   const assignFileRequest = (fileId?: string) => {
+    console.log('assignFileRequest')
+
     const { activeCount, all } = activeCountInfo.value
     if (all >= maxConcurrent) {
       console.log('没有多余的请求了')
@@ -67,6 +71,9 @@ export function useRequestQueue(
     }
     if (fileId) {
       activeConfig.value[fileId] = { total: 1, pending: 0 }
+      // 更新状态
+      const fileInfoIndex = fileList.value.findIndex(v => v.id === fileId)
+      fileList.value[fileInfoIndex].uniqueStatus = undefined
     } else {
       // 分配剩余请求
       // 剩余请求数
@@ -77,12 +84,15 @@ export function useRequestQueue(
         if (sortData.length) {
           const { id: fileId } = sortData[0]
           if (!activeConfig.value[fileId]) {
-            console.log(fileId)
-            console.log(activeConfig.value)
-            console.log(fileId, sortData)
-            debugger
+            // console.log(fileId)
+            // console.log(activeConfig.value)
+            // console.log(fileId, sortData)
+            // debugger
             return
           }
+          // 更新状态
+          const fileInfoIndex = fileList.value.findIndex(v => v.id === fileId)
+          fileList.value[fileInfoIndex].uniqueStatus = undefined
           const num = activeConfig.value[fileId].total || 0
           activeConfig.value[fileId].total = num + number
         }
@@ -105,6 +115,8 @@ export function useRequestQueue(
    * */
 
   const processQueue = async () => {
+    console.log('processQueue')
+
     const fileIds = Object.keys(activeConfig.value)
     if (activeCountInfo.value.activeCount >= maxConcurrent) {
       console.log('请求已经满额，等待中...')
@@ -190,8 +202,11 @@ export function useRequestQueue(
       const { totalChunks, uploadedTotal } = fileList.value.find(v => v.id === fileId)!
       // 合并成功后
       if (totalChunks === uploadedTotal) {
+        getData()
+        debugger
         if (uploadCunkPool.value[fileId]?.length === 0) delete uploadCunkPool.value[fileId]
         if (activeConfig.value[fileId]?.pending === 0) delete activeConfig.value[fileId]
+
         continueUpload()
       }
     }
@@ -201,25 +216,39 @@ export function useRequestQueue(
   }
 
   /**
-   * 开始上传暂停的文件: 特殊情况：批量请求被全部被占用； 需要重新分配
+   * 最后开始上传暂停的文件: 特殊情况：批量请求被全部被占用； 需要重新分配
+   * 基本条件：
+   * 1. uploadNumber >  fileList.length(uploading)：开始的时候（要排除）/全部传完结束的时候
+   * 2. 请求数全部被占用
+   * 3. 有uniqueStatus === 'once'标识的文件
+   *  下才能执行
    * */
   const handleStatusUploadingFile = (fileId: string) => {
+    const { activeCount, all } = activeCountInfo.value
+
     let targetFile = null
+
     fileList.value.forEach(v => {
-      if (v.status == 'pending' && !v.bindworkerIndex.length) {
+      if (v.status == 'uploading' && v.uniqueStatus === 'once') {
         targetFile = v
       }
     })
-    console.log('targetFile', targetFile)
+    console.log('===========>', targetFile)
+
     if (targetFile) {
+      if (all < maxConcurrent) {
+        console.log('targetFile', targetFile)
+        console.log('fileId', fileId)
+        getData()
+        debugger
+        // assignFileRequest()
+        // processQueue()
+        return
+      }
+
       const { id } = targetFile
-
       const max: any = { id: null, total: 0 }
-      console.log('activeConfig', Object.keys(activeConfig), activeConfig.value)
-      debugger
       Object.keys(activeConfig.value).forEach((key: string) => {
-        console.log(key, activeConfig.value)
-
         const { total } = activeConfig.value[key]
 
         if (total) {
@@ -229,10 +258,20 @@ export function useRequestQueue(
           }
         }
       })
+      console.log('targetFile', targetFile)
+      console.log('fileId', fileId)
+      getData()
       debugger
-      if (fileId === max.id && activeConfig.value[fileId]?.total > 1) {
+      if (fileId === max.id && activeConfig.value[fileId]?.total > 1 && !activeConfig.value[id]) {
         activeConfig.value[fileId].total = activeConfig.value[fileId].total - 1
         activeConfig.value[id] = { total: 1, pending: 0 }
+        // 更新状态
+        const fileInfoIndex = fileList.value.findIndex(v => v.id === id)
+        fileList.value[fileInfoIndex].uniqueStatus = undefined
+        console.log('targetFile', targetFile)
+        console.log('fileId', fileId)
+        getData()
+        debugger
       }
     }
   }
@@ -333,15 +372,16 @@ export const manageFileBindworkerIndex = (props: {
   type: 'add' | 'update' | 'delete'
 }) => {
   const { fileList, fileId, workerIndex, type } = props
+  const fileIndex = fileList.value.findIndex(v => v.id === fileId)
 
   if (type === 'add') {
-    const fileIndex = fileList.value.findIndex(v => v.id === fileId)
     if (!fileList.value[fileIndex].bindworkerIndex.includes(workerIndex)) {
       fileList.value[fileIndex].bindworkerIndex.push(workerIndex)
     }
   } else if (type === 'update') {
+    const data = fileList.value[fileIndex].bindworkerIndex.filter(v => v != workerIndex)
+    fileList.value[fileIndex].bindworkerIndex = data
   } else if (type === 'delete') {
-    const fileIndex = fileList.value.findIndex(v => v.id === fileId)
     fileList.value[fileIndex].bindworkerIndex = []
   }
 }

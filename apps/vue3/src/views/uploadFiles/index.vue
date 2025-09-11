@@ -173,7 +173,9 @@
     fileList,
     uploadChunk,
     continueUpload,
-    updateFileSeed
+    updateFileSeed,
+    uploadNumber,
+    getData
   )
 
   const uploadFile = async (event: Event): Promise<any> => {
@@ -216,6 +218,8 @@
    * 3. 文件合并完成后，分配给其它文件
    * */
   const assignWorkerFile = (fileId?: fileIdType, workerIndex?: number) => {
+    console.log('assignWorkerFile')
+
     if (workerIndex == -1) {
       console.log('没有线程了')
       return
@@ -337,6 +341,7 @@
    * web worker执行 分配任务
    * */
   const assignTaskToWorker = (workerindex: number) => {
+    console.log('assignTaskToWorker')
     const { isBusy, handleFile: fileId, worker } = workers.value[workerindex]
 
     if (isBusy && fileId) {
@@ -460,26 +465,60 @@
   }
 
   /**
-   * 开始上传暂停的文件: 特殊情况：worker全部被占用； 需要重新分配
+   * 最后开始上传暂停的文件: 特殊情况：worker全部被占用； 需要重新分配
+   * 基本条件：
+   * 1. 有uniqueStatus === 'once'标识的文件
+   * 2. worker全部被占用
+   *  下才能执行
+   *
    * */
   const handleStatusUploadingFile = (workerindex: number) => {
-    const index = findIdleWork()
-    if (index != -1) return
-    // 被占用的work最多的索引
-    let maxWorkerIndex: any[] = []
+    // 占用的文件
+    let maxWorkerFile: any = null
     // 正要上传的文件
     let targetFile = null
     fileList.value.forEach(v => {
-      if (v.status == 'pending' && v.uniqueStatus === 'once') {
+      if (v.status == 'uploading' && v.uniqueStatus === 'once') {
         targetFile = v
       }
-      if (v.status === 'pending') {
-        if (maxWorkerIndex.length > v.bindworkerIndex.length) {
-          maxWorkerIndex = [...v.bindworkerIndex]
+      if (v.status === 'uploading' && v.uniqueStatus != 'once') {
+        if (!maxWorkerFile) {
+          maxWorkerFile = v
+        } else {
+          if (maxWorkerFile.bindworkerIndex.length > v.bindworkerIndex.length) {
+            maxWorkerFile = { ...v }
+          }
         }
       }
     })
-    if (maxWorkerIndex.includes(workerindex) && targetFile) {
+    const workindex = findIdleWork()
+    console.log('targetFile--->', targetFile)
+
+    /***
+     * 1.
+     * */
+    if (!targetFile) {
+      return
+    }
+    /***
+     * 2. 有多余的线程
+     * */
+    if (workindex != -1) {
+      getData()
+      console.log('maxWorkerFile', maxWorkerFile)
+      console.log('workerindex', workerindex)
+      console.log('targetFile', targetFile)
+      debugger
+      assignWorkerFile()
+      return
+    }
+
+    getData()
+    console.log('maxWorkerFile', maxWorkerFile)
+    console.log('workerindex', workerindex)
+    console.log('targetFile', targetFile)
+    debugger
+    if (maxWorkerFile && maxWorkerFile.bindworkerIndex.includes(workerindex)) {
       const { id: targetId } = targetFile
       // 重新设置worker线程
       workers.value[workerindex].isBusy = true
@@ -490,6 +529,15 @@
         fileId: targetId,
         fileList,
       })
+      manageFileBindworkerIndex({
+        type: 'update',
+        workerIndex: workerindex,
+        fileId: maxWorkerFile.id,
+        fileList,
+      })
+
+      getData()
+      debugger
     }
   }
   // 文件上传中间函数
