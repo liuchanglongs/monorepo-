@@ -12,6 +12,7 @@
       </div>
 
       <div class="progress" v-for="(info, index) in fileList" :key="info.id">
+        {{ info.file.name }}：
         <span class="seed">{{ info.seed }}/S</span>
         <el-progress :percentage="info.progress" />
         <el-button
@@ -437,7 +438,7 @@
    * 为文件创建任务池：已经创建过/未创建
    * 请求分配：有多余的请求(assignFileRequest)/没有多余的请求；
    * worker分配：有空闲的线程(assignWorkerFile)/没有空闲的线程；
-   *    没有多余的请求/没有空闲的线程：先设置为uploading,bindworkerIndex =[]，然后在hash计算/上传切片异步结束后，
+   *   有就分一个，没有多余的请求/没有空闲的线程：先设置为uploading,bindworkerIndex =[]，然后在hash计算/上传切片异步结束后，
    * 找出分配最多的，至少分配给一个线程/请求并发给这个文件
    * */
   const onContinueUpload = async (info: fileInfoType, index: number) => {
@@ -445,7 +446,13 @@
     if (uploadingFile.length === uploadNumber) {
       fileList.value[index].status = 'pending'
     } else if (uploadNumber > uploadingFile.length) {
+      /**
+       * 1. 只剩暂停的这一个文件。开始的时候马上暂停（worker没工作完了）/上传了一部分（worker工作完了）
+       * 2. 同时上传2个：有一个正在传，然后传这个暂停的文件：开始的时候马上暂停/上传了一部分
+       * */
       fileList.value[index].status = 'uploading'
+      fileList.value[index].uniqueStatus = 'once'
+
       await continueUpload(index)
       // 开始请求
       await processQueue()
@@ -458,14 +465,18 @@
   const handleStatusUploadingFile = (workerindex: number) => {
     const index = findIdleWork()
     if (index != -1) return
-    // 被占用的work索引
+    // 被占用的work最多的索引
     let maxWorkerIndex: any[] = []
     // 正要上传的文件
     let targetFile = null
     fileList.value.forEach(v => {
-      if (v.status == 'pending' && !v.bindworkerIndex.length) {
+      if (v.status == 'pending' && v.uniqueStatus === 'once') {
         targetFile = v
-        maxWorkerIndex = [...v.bindworkerIndex]
+      }
+      if (v.status === 'pending') {
+        if (maxWorkerIndex.length > v.bindworkerIndex.length) {
+          maxWorkerIndex = [...v.bindworkerIndex]
+        }
       }
     })
     if (maxWorkerIndex.includes(workerindex) && targetFile) {

@@ -77,7 +77,8 @@ export function useRequestQueue(
         if (sortData.length) {
           const { id: fileId } = sortData[0]
           if (!activeConfig.value[fileId]) {
-            console.log(activeConfig.value[fileId])
+            console.log(fileId)
+            console.log(activeConfig.value)
             console.log(fileId, sortData)
             debugger
             return
@@ -126,7 +127,10 @@ export function useRequestQueue(
       // console.log('------------start')
       // console.log(fileId, requestNumber)
       if (requestNumber <= 0) {
+        console.log('uploadCunkPool', uploadCunkPool.value)
+        console.log('activeConfig', activeConfig.value)
         console.log('不发起请求，不能作为当前文件结束，请求速度大于切片hash计算速度，也可能为0')
+
         continue
       }
       for (let index = 0; index < requestNumber; index++) {
@@ -186,7 +190,7 @@ export function useRequestQueue(
       const { totalChunks, uploadedTotal } = fileList.value.find(v => v.id === fileId)!
       // 合并成功后
       if (totalChunks === uploadedTotal) {
-        if (uploadCunkPool.value[fileId].length === 0) delete uploadCunkPool.value[fileId]
+        if (uploadCunkPool.value[fileId]?.length === 0) delete uploadCunkPool.value[fileId]
         if (activeConfig.value[fileId]?.pending === 0) delete activeConfig.value[fileId]
         continueUpload()
       }
@@ -211,8 +215,13 @@ export function useRequestQueue(
       const { id } = targetFile
 
       const max: any = { id: null, total: 0 }
-      Object.keys(activeConfig).forEach((key: string) => {
+      console.log('activeConfig', Object.keys(activeConfig), activeConfig.value)
+      debugger
+      Object.keys(activeConfig.value).forEach((key: string) => {
+        console.log(key, activeConfig.value)
+
         const { total } = activeConfig.value[key]
+
         if (total) {
           if (total > max.total) {
             max.id = key
@@ -220,6 +229,7 @@ export function useRequestQueue(
           }
         }
       })
+      debugger
       if (fileId === max.id && activeConfig.value[fileId]?.total > 1) {
         activeConfig.value[fileId].total = activeConfig.value[fileId].total - 1
         activeConfig.value[id] = { total: 1, pending: 0 }

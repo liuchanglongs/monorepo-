@@ -27,8 +27,13 @@ export interface fileInfoType {
   status: 'pending' | 'uploading' | 'paused' | 'completed' | 'error'
   progress: number
   seed: number | string
-  // 是否绑定了worker
+  // 是否绑定了worker: 方便寻找线程
   bindworkerIndex: any[]
+  /**
+   * 特殊情况：
+   * once: 代表暂停后，点击开始上传，uploadNumber >  fileList.length(uploading)
+   * */
+  uniqueStatus?: 'once'
   // 已经上传切片的数量
   uploadedTotal: number
   // 总切片数
@@ -39,7 +44,7 @@ export interface workersType {
   worker: Worker
   // 是否在工作
   isBusy: Boolean
-  //  当前处理的文件列表
+  //  当前处理的文件列表：
   handleFile?: fileIdType
 }
 
