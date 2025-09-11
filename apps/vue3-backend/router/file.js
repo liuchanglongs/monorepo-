@@ -27,7 +27,14 @@ const UPLOAD_DIR = path.join(__dirname, "../uploads"); // 定义上传目录的�
  * 上传切片:busboy做文件解析
  * @param {chunkBlob}  切片文件的 Blob 对象的字段名
  * */
-router.post("/upload1", (req, res) => {
+router.post("/upload1", async (req, res) => {
+  // 添加2秒延时
+  await new Promise((resolve) => {
+    const trim = setTimeout(() => {
+      clearTimeout(trim);
+      resolve();
+    }, 2000);
+  });
   const bb = busboy({ headers: req.headers });
   let chunkHash, chunkFilename, chunkIndex, writeStream;
   //  分片存储目录路径 、切片存储路径
