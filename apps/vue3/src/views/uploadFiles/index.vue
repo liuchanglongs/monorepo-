@@ -3,6 +3,23 @@
   <div class="file">
     <h1 @click="getData">多个文件上传</h1>
     <div class="box">
+      <div style="display: flex; align-items: center">
+        <span style="width: 150px">同时上传数量：</span>
+        <el-select
+          v-model="uploadNumber"
+          size="small"
+          placeholder="请选择"
+          @change="changeUploadNumber"
+        >
+          <el-option
+            v-for="item in options"
+            :key="item.value"
+            :label="item.label"
+            :value="item.value"
+          >
+          </el-option>
+        </el-select>
+      </div>
       <input type="file" @change="uploadFile" multiple />
       <div>
         <div v-for="(worker, index) in workers" :key="index" style="display: flex">
@@ -61,7 +78,21 @@
   // 同时上传个数：必须小于等于请求线程数、批量请求数量限制
   // 如果设计成同时上传个数 > 线程数：那么一个worker处理列表：
   // handleFile?: fileIdType[]
-  const uploadNumber = 2
+  const uploadNumber = ref<number>(2)
+  const options = [
+    {
+      value: 1,
+      label: '同时上传一个',
+    },
+    {
+      value: 2,
+      label: '同时上传两个',
+    },
+    {
+      value: 3,
+      label: '同时上传三个',
+    },
+  ]
 
   const fileList = ref<fileInfoType[]>([])
   // 开启的线程
@@ -196,7 +227,7 @@
       fileList.value = data
 
       // 开始上传:至少有一个线程处理一个文件
-      const count = data.length >= uploadNumber ? uploadNumber : data.length
+      const count = data.length >= uploadNumber.value ? uploadNumber.value : data.length
 
       for (let index = 0; index < count; index++) {
         await uploadFileMiddle(index)
@@ -409,7 +440,7 @@
    * 4. 取消worker分配
    * 5. 开始下一个的文件上传：continueUpload
    * */
-  const onPaused = (info: fileInfoType, fileIndex: number) => {
+  const onPaused = (info: fileInfoType, fileIndex: number, isContinue = true) => {
     const { id } = info
     cancleRequest(id)
     fileList.value[fileIndex].status = 'paused'
@@ -428,8 +459,9 @@
       fileList,
       fileId: id,
     })
-
-    continueUpload()
+    if (isContinue) {
+      continueUpload()
+    }
   }
   /**
    * 重新开始上传：
@@ -443,9 +475,9 @@
    * */
   const onContinueUpload = async (info: fileInfoType, index: number) => {
     const uploadingFile = fileList.value.filter(v => v.status == 'uploading')
-    if (uploadingFile.length === uploadNumber) {
+    if (uploadingFile.length === uploadNumber.value) {
       fileList.value[index].status = 'pending'
-    } else if (uploadNumber > uploadingFile.length) {
+    } else if (uploadNumber.value > uploadingFile.length) {
       /**
        * 1. 只剩暂停的这一个文件。开始的时候马上暂停（worker没工作完了）/上传了一部分（worker工作完了）
        * 2. 同时上传2个：有一个正在传，然后传这个暂停的文件：开始的时候马上暂停/上传了一部分
@@ -456,6 +488,17 @@
       await continueUpload(index)
       // 开始请求
       await processQueue()
+    }
+  }
+
+  const changeUploadNumber = (number: number) => {
+    const pendingFile = fileList.value.filter(v => v.status === 'uploading')
+    if (pendingFile.length > number) {
+      fileList.value.forEach((v, index) => {
+        if (number <= index && v.status === 'uploading') {
+          onPaused(v, index, false)
+        }
+      })
     }
   }
 
@@ -523,6 +566,9 @@
     align-items: center;
     height: 100%;
     background-color: #ffffff;
+    .box {
+      width: 500px;
+    }
   }
   .progress {
     display: flex;
