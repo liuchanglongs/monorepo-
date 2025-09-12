@@ -22,7 +22,6 @@ export function useRequestQueue(
   uploadChunk: (props: uploadChunkType) => Promise<any>,
   continueUpload: () => Promise<any>,
   updateFileSeed: (requestTotal: number) => updateFileSeedCallBack,
-  uploadNumber: number,
   getData: any,
   maxConcurrent = 3
 ) {
@@ -120,6 +119,7 @@ export function useRequestQueue(
     const fileIds = Object.keys(activeConfig.value)
     if (activeCountInfo.value.activeCount >= maxConcurrent) {
       console.log('请求已经满额，等待中...')
+      // processQueue()
       return
     }
 
@@ -142,7 +142,6 @@ export function useRequestQueue(
         console.log('uploadCunkPool', uploadCunkPool.value)
         console.log('activeConfig', activeConfig.value)
         console.log('不发起请求，不能作为当前文件结束，请求速度大于切片hash计算速度，也可能为0')
-
         continue
       }
       for (let index = 0; index < requestNumber; index++) {
@@ -160,19 +159,32 @@ export function useRequestQueue(
                     allControllers.value[fileId] = []
                   }
                   allControllers.value[fileId].push({ chunk, controller })
+                  if (!activeConfig.value[fileId]) {
+                    getData()
+                    debugger
+                  }
+                  activeConfig.value[fileId].pending = activeConfig.value[fileId].pending + 1
                 } else {
+                  console.log('当请求失败或被取消时，可能出现 pending-- 被多次调用的情况')
+
                   // 接口调用完成
                   allControllers.value[fileId] = allControllers.value[fileId].filter(
                     v => v.chunk.chunkHash != chunk.chunkHash
                   )
-                  console.log('接口调用完成:', allControllers.value)
+                  if (activeConfig.value[fileId].pending == 0) {
+                    getData()
+                    debugger
+                  }
+                  // 更新当前文件的活跃请求数
+                  activeConfig.value[fileId].pending = activeConfig.value[fileId].pending - 1
+                  // 特殊处理
+                  handleStatusUploadingFile(fileId)
                 }
               },
             },
           })
         })
       }
-      activeConfig.value[fileId].pending = activeConfig.value[fileId].pending + requestNumber
     }
     if (!queueRequest.length) {
       console.log(fileIds, '当前无请求', activeConfig.value)
@@ -193,23 +205,6 @@ export function useRequestQueue(
     // console.log('file', fileList.value)
     // console.log('end-----------------')
     // debugger
-    for (let index = 0; index < result.length; index++) {
-      const { fileId, done } = result[index]
-      if (!result[index] || !done) continue
-      // 更新当前文件的活跃请求数
-      activeConfig.value[fileId].pending = activeConfig.value[fileId].pending - 1
-      handleStatusUploadingFile(fileId)
-      const { totalChunks, uploadedTotal } = fileList.value.find(v => v.id === fileId)!
-      // 合并成功后
-      if (totalChunks === uploadedTotal) {
-        getData()
-        debugger
-        if (uploadCunkPool.value[fileId]?.length === 0) delete uploadCunkPool.value[fileId]
-        if (activeConfig.value[fileId]?.pending === 0) delete activeConfig.value[fileId]
-
-        continueUpload()
-      }
-    }
 
     // // 继续调用
     await processQueue()
@@ -233,14 +228,14 @@ export function useRequestQueue(
         targetFile = v
       }
     })
-    console.log('===========>', targetFile)
+    // console.log('===========>', targetFile)
 
     if (targetFile) {
       if (all < maxConcurrent) {
         console.log('targetFile', targetFile)
         console.log('fileId', fileId)
-        getData()
-        debugger
+        // getData()
+        // debugger
         // assignFileRequest()
         // processQueue()
         return
@@ -268,10 +263,7 @@ export function useRequestQueue(
         // 更新状态
         const fileInfoIndex = fileList.value.findIndex(v => v.id === id)
         fileList.value[fileInfoIndex].uniqueStatus = undefined
-        console.log('targetFile', targetFile)
-        console.log('fileId', fileId)
-        getData()
-        debugger
+        processQueue()
       }
     }
   }
@@ -284,7 +276,9 @@ export function useRequestQueue(
     // allControllers.value = []
   }
   /**
-   *  取消该任务的正在执行的所有请求
+   *  取消该任务的正在执行的所有请求:
+   *  注意请求个数限制操作不要批量设置：例如pending+2
+   * 有可能完成一个，一个被取消了
    */
   const cancleRequest = (fileId: string) => {
     const controllers = allControllers.value[fileId]

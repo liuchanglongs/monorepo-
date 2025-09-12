@@ -5,12 +5,7 @@
     <div class="box">
       <div style="display: flex; align-items: center">
         <span style="width: 150px">同时上传数量：</span>
-        <el-select
-          v-model="uploadNumber"
-          size="small"
-          placeholder="请选择"
-          @change="changeUploadNumber"
-        >
+        <el-select v-model="uploadNumber" size="small" placeholder="请选择">
           <el-option
             v-for="item in options"
             :key="item.value"
@@ -56,7 +51,7 @@
   </div>
 </template>
 <script setup lang="ts">
-  import { onUnmounted, ref } from 'vue'
+  import { onUnmounted, ref, watch } from 'vue'
   import type {
     chunkType,
     fileIdType,
@@ -74,11 +69,16 @@
   } from './utils/useRequestQueue'
   const CHUNK_SIZE = 1024 * 1024 * 5 // 5MB
   // 启用的线程数
-  const THREAD_COUNT = 2
+  const THREAD_COUNT = 3
   // 同时上传个数：必须小于等于请求线程数、批量请求数量限制
   // 如果设计成同时上传个数 > 线程数：那么一个worker处理列表：
   // handleFile?: fileIdType[]
+
   const uploadNumber = ref<number>(2)
+  watch(uploadNumber, (newVal, old) => {
+    changeUploadNumber(newVal, old)
+  })
+
   const options = [
     {
       value: 1,
@@ -130,11 +130,12 @@
   // 上传切片文件
   const uploadChunk = async (props: uploadChunkType) => {
     const { fileId, controller, callBack } = props
+    const chunk = uploadCunkPool.value[fileId].shift()!
+    if (!chunk) return
     const { updateFileSeedCallBack, collectController } = callBack
     const fileInfoIndex = fileList.value.findIndex(v => v.id === fileId)
-
     const { file } = fileList.value[fileInfoIndex]
-    const chunk = uploadCunkPool.value[fileId].shift()!
+    console.log('chunk', chunk)
     const { chunkStart, chunkEnd, chunkHash, chunkIndex } = chunk
 
     const fromData = new FormData()
@@ -158,14 +159,21 @@
         /**
          * 为什么要重新获取？不适用外面的变量 uploadedTotal, totalChunks
          * */
+        //  const { uploadedTotal, totalChunks } = fileList.value[fileInfoIndex]
+        //  const currentUploadedTotal = uploadedTotal + 1
+        // fileList.value[fileInfoIndex].uploadedTotal = currentUploadedTotal
+        // updateFileProgress(fileInfoIndex, currentUploadedTotal, totalChunks)
+        // updateFileSeedCallBack(fileId, CHUNK_SIZE, fileInfoIndex)
+
+        fileList.value[fileInfoIndex].uploadedTotal =
+          fileList.value[fileInfoIndex].uploadedTotal + 1
         const { uploadedTotal, totalChunks } = fileList.value[fileInfoIndex]
-        const currentUploadedTotal = uploadedTotal + 1
-        fileList.value[fileInfoIndex].uploadedTotal = currentUploadedTotal
-        updateFileProgress(fileInfoIndex, currentUploadedTotal, totalChunks)
-        updateFileSeedCallBack(fileId, CHUNK_SIZE, fileInfoIndex)
         collectController(chunk, true)
 
-        if (currentUploadedTotal === totalChunks) {
+        updateFileProgress(fileInfoIndex, uploadedTotal, totalChunks)
+        updateFileSeedCallBack(fileId, CHUNK_SIZE, fileInfoIndex)
+
+        if (uploadedTotal === totalChunks) {
           await mergeChunks(fileName, fileId)
         }
 
@@ -205,7 +213,6 @@
     uploadChunk,
     continueUpload,
     updateFileSeed,
-    uploadNumber,
     getData
   )
 
@@ -430,6 +437,12 @@
     if (response.ok) {
       const fileInfoIndex = fileList.value.findIndex(v => v.id === fileId)
       fileList.value[fileInfoIndex].status = 'completed'
+      // 清除数据
+      if (uploadCunkPool.value[fileId]?.length === 0) delete uploadCunkPool.value[fileId]
+      if (activeConfig.value[fileId]?.pending === 0) delete activeConfig.value[fileId]
+      // 继续传
+      continueUpload()
+
       ElMessage({
         message: '上传成功',
         type: 'success',
@@ -483,6 +496,7 @@
     if (uploadingFile.length === uploadNumber.value) {
       fileList.value[index].status = 'pending'
     } else if (uploadNumber.value > uploadingFile.length) {
+      // debugger
       /**
        * 1. 只剩暂停的这一个文件。开始的时候马上暂停（worker没工作完了）/上传了一部分（worker工作完了）
        * 2. 同时上传2个：有一个正在传，然后传这个暂停的文件：开始的时候马上暂停/上传了一部分
@@ -495,13 +509,38 @@
       await processQueue()
     }
   }
+  /**
+   * 能上传数:pending+uploading
+   * number：变化后的number
+   * 1. number（大->小）: 请求个数>number 的请求，全部暂停
+   * 2. number（小->大）： 发起的 请求个数== number；不够就立即发起
+   * */
+  const changeUploadNumber = (number: number, oldNumber: number) => {
+    const uploadingFile = fileList.value.filter(v => v.status === 'uploading')
 
-  const changeUploadNumber = (number: number) => {
-    const pendingFile = fileList.value.filter(v => v.status === 'uploading')
-    if (pendingFile.length > number) {
+    //  1.大->小
+    if (number < oldNumber) {
+      let num = 0
+      // 上传的个数只能为number个
       fileList.value.forEach((v, index) => {
-        if (number <= index && v.status === 'uploading') {
-          onPaused(v, index, false)
+        if (v.status === 'uploading') {
+          num = num + 1
+          if (num > number) {
+            onPaused(v, index, false)
+          }
+        }
+      })
+    }
+    // 2.小->大
+    if (number > oldNumber) {
+      let num = number - uploadingFile.length
+      fileList.value.forEach((v, index) => {
+        if (num <= 0) {
+          return
+        }
+        if (v.status === 'pending') {
+          num = num - 1
+          onContinueUpload(v, index)
         }
       })
     }
@@ -547,20 +586,20 @@
      * 2. 有多余的线程
      * */
     if (workindex != -1) {
-      getData()
-      console.log('maxWorkerFile', maxWorkerFile)
-      console.log('workerindex', workerindex)
-      console.log('targetFile', targetFile)
-      debugger
+      // getData()
+      // console.log('maxWorkerFile', maxWorkerFile)
+      // console.log('workerindex', workerindex)
+      // console.log('targetFile', targetFile)
+      // debugger
       assignWorkerFile()
       return
     }
 
-    getData()
-    console.log('maxWorkerFile', maxWorkerFile)
-    console.log('workerindex', workerindex)
-    console.log('targetFile', targetFile)
-    debugger
+    // getData()
+    // console.log('maxWorkerFile', maxWorkerFile)
+    // console.log('workerindex', workerindex)
+    // console.log('targetFile', targetFile)
+    // debugger
     if (maxWorkerFile && maxWorkerFile.bindworkerIndex.includes(workerindex)) {
       const { id: targetId } = targetFile
       // 重新设置worker线程
@@ -579,8 +618,8 @@
         fileList,
       })
 
-      getData()
-      debugger
+      // getData()
+      // debugger
     }
   }
   // 文件上传中间函数

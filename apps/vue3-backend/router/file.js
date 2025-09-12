@@ -33,7 +33,7 @@ router.post("/upload1", async (req, res) => {
     const trim = setTimeout(() => {
       clearTimeout(trim);
       resolve();
-    }, 2000);
+    }, 3000);
   });
   const bb = busboy({ headers: req.headers });
   let chunkHash, chunkFilename, chunkIndex, writeStream;
