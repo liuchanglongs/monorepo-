@@ -55,6 +55,7 @@
 <script setup>
   import { ref, reactive, onUnmounted } from 'vue'
   // 引入StreamSaver
+  // 不能暂停重新下载
   import streamSaver from 'streamsaver'
 
   // 配置StreamSaver（可选，用于自定义Service Worker路径）
