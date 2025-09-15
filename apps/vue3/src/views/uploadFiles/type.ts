@@ -31,7 +31,7 @@ export interface fileInfoType {
   bindworkerIndex: any[]
   /**
    * 特殊情况：
-   * once: 代表暂停后，点击开始上传，uploadNumber >  fileList.length(uploading)
+   * once: 代表解决暂停后上传的特殊情况：uploadingFile.length != uploadNumber.value
    * */
   uniqueStatus?: 'once'
   // 已经上传切片的数量

@@ -158,6 +158,9 @@
       if (data.code === 200) {
         /**
          * 为什么要重新获取？不适用外面的变量 uploadedTotal, totalChunks
+         * 解构后会失去响应性：假如同时两个请求进来currentUploadedTotal 可能为相同的值。
+         * 导致uploadedTotal、pengdig个数计算出错
+         *
          * */
         //  const { uploadedTotal, totalChunks } = fileList.value[fileInfoIndex]
         //  const currentUploadedTotal = uploadedTotal + 1

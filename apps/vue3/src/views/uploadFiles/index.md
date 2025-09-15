@@ -37,8 +37,14 @@ export interface fileInfoType {
   // pending:准备状态；uploading：上传状态
   status: 'pending' | 'uploading' | 'paused' | 'completed' | 'error'
   progress: number
-  seed: number
-
+  seed: number | string
+  // 是否绑定了worker: 方便寻找线程
+  bindworkerIndex: any[]
+  /**
+   * 特殊情况：
+   * once: 代表解决暂停后上传的特殊情况：uploadingFile.length != uploadNumber.value
+   * */
+  uniqueStatus?: 'once'
   // 已经上传切片的数量
   uploadedTotal: number
   // 总切片数
@@ -129,22 +135,28 @@ const activeConfig = ref<{ [key: string]: { total: number; pending: number } }>(
 
 &emsp;&emsp;看 ./utils/useRequestQueue.ts中的processQueue函数
 
-# 未实现
+# 功能
 
-5. 暂停 / 恢复功能：
-   暂停时会释放 Worker 资源，让其处理其他任务
-   恢复时将任务重新加入队列，等待空闲 Worker
-   保持已完成的切片状态，恢复后从断点继续上传
-   优化：Worker 始终在池中循环利用，即使任务暂停，Worker 也不会被销毁，而是转为 “空闲” 状态等待新任务（可能是恢复的原任务或新任务）。
-6. 状态管理：
-   维护每个文件的上传状态（等待、上传中、暂停、完成、错误）
-   实时更新进度条和状态文本
-   提供直观的操作按钮（暂停 / 恢复）
+&emsp;&emsp;功能实现顺序：单个上传 -> 多个同时上传 -> 某一个传完继续下一个文件上传 -> 暂停 -> 开始（暂停的文件）-> 控制同时上传的个数
 
-   内存消耗的问题：切片的chunk有必要传回Blob？避免双倍的内存开销
-   不用的浏览器怎么启用合适的 worker线程数
+## 暂停
 
-学习： react 与 vue响应式更新流程
+&emsp;&emsp; 看这个 onPaused 函数
 
-- https://juejin.cn/post/7475978280839954468#heading-17
-  为啥不用webworker
+## 开始（暂停的文件）
+
+&emsp;&emsp; 看这个 onContinueUpload 函数
+
+```
+解决暂停后上传的特殊情况：uploadingFile.length != uploadNumber.value
+index.vue/ handleStatusUploadingFile 函数
+utils/useRequestQueue.ts  handleStatusUploadingFile 函数
+```
+
+## 控制同时上传的个数
+
+&emsp;&emsp; 看这个 changeUploadNumber 函数 5. 暂停 / 恢复功能：
+
+# 解决内存消耗的问题：
+
+- 切片的chunk有必要传回Blob？避免双倍的内存开销
