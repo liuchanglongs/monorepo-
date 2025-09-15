@@ -206,4 +206,147 @@ router.post("/merge", async (req, res) => {
   res.status(200).json({ code: 200, message: "合并文件成功" });
 });
 
+/**
+ * 基础文件下载接口 - 使用流式处理
+ * @param {string} fileName - 文件名
+ */
+router.get("/download/:fileName", (req, res) => {
+  const { fileName } = req.params;
+  const filePath = path.join(UPLOAD_DIR, fileName);
+
+  // 检查文件是否存在
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ code: 404, message: "文件不存在" });
+  }
+
+  // 获取文件信息
+  const stat = fs.statSync(filePath);
+  const fileSize = stat.size;
+
+  // 设置响应头
+  res.setHeader("Content-Type", "application/octet-stream");
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="${encodeURIComponent(fileName)}"`
+  );
+  res.setHeader("Content-Length", fileSize);
+  res.setHeader("Accept-Ranges", "bytes");
+
+  // 创建可读流并管道到响应
+  const readStream = fs.createReadStream(filePath);
+
+  // 错误处理
+  readStream.on("error", (err) => {
+    console.error("文件读取错误:", err);
+    if (!res.headersSent) {
+      res.status(500).json({ code: 500, message: "文件读取失败" });
+    }
+  });
+
+  // 客户端断开连接时清理资源
+  req.on("aborted", () => {
+    console.log("客户端中断下载:", fileName);
+    readStream.destroy();
+  });
+
+  // 使用管道传输文件
+  readStream.pipe(res);
+});
+
+// 支持Range请求的文件下载接口
+router.get("/download-with-progress/:filename", (req, res) => {
+  try {
+    const filename = req.params.filename;
+    const filePath = path.join(__dirname, "../uploads", filename);
+
+    // 检查文件是否存在
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: "文件不存在" });
+    }
+
+    const stat = fs.statSync(filePath);
+    const fileSize = stat.size;
+    const range = req.headers.range;
+
+    // 设置基本响应头
+    res.setHeader("Content-Type", "application/octet-stream");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${encodeURIComponent(filename)}"`
+    );
+    res.setHeader("Accept-Ranges", "bytes");
+    res.setHeader("Content-Length", fileSize);
+
+    // 处理Range请求（断点续传）
+    if (range) {
+      const parts = range.replace(/bytes=/, "").split("-");
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+      const chunksize = end - start + 1;
+
+      // 验证Range范围
+      if (start >= fileSize || end >= fileSize) {
+        res.status(416).setHeader("Content-Range", `bytes */${fileSize}`);
+        return res.end();
+      }
+
+      // 设置206部分内容响应头
+      res.status(206);
+      res.setHeader("Content-Range", `bytes ${start}-${end}/${fileSize}`);
+      res.setHeader("Content-Length", chunksize);
+
+      // 创建可读流（指定范围）
+      const stream = fs.createReadStream(filePath, { start, end });
+
+      // 处理流错误
+      stream.on("error", (err) => {
+        console.error("Stream error:", err);
+        if (!res.headersSent) {
+          res.status(500).json({ error: "文件读取失败" });
+        }
+      });
+
+      // 管道传输
+      stream.pipe(res);
+    } else {
+      // 完整文件下载
+      const stream = fs.createReadStream(filePath);
+
+      stream.on("error", (err) => {
+        console.error("Stream error:", err);
+        if (!res.headersSent) {
+          res.status(500).json({ error: "文件读取失败" });
+        }
+      });
+
+      stream.pipe(res);
+    }
+  } catch (error) {
+    console.error("Download error:", error);
+    res.status(500).json({ error: "下载失败" });
+  }
+});
+
+// 获取文件信息接口（用于前端获取文件大小）
+router.get("/file-info/:filename", (req, res) => {
+  try {
+    const filename = req.params.filename;
+    const filePath = path.join(__dirname, "../uploads", filename);
+
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: "文件不存在" });
+    }
+
+    const stat = fs.statSync(filePath);
+    res.json({
+      filename,
+      size: stat.size,
+      lastModified: stat.mtime,
+    });
+  } catch (error) {
+    console.error("File info error:", error);
+    res.status(500).json({ error: "获取文件信息失败" });
+  }
+});
+
 module.exports = router; // 导出路由

@@ -5,18 +5,23 @@ const router = createRouter({
   routes: [
     {
       path: '/test',
-      name: 'home',
+      name: 'test',
       component: () => import('@/views/allFile/index.vue'), // Lazy-loaded HomeView
     },
     {
       path: '/single',
-      name: 'home',
+      name: 'single',
       component: () => import('@/views/file/index.vue'), // Lazy-loaded HomeView
     },
     {
-      path: '/',
-      name: 'home',
+      path: '/uploadFiles',
+      name: 'uploadFiles',
       component: () => import('@/views/uploadFiles/index.vue'), // Lazy-loaded HomeView
+    },
+    {
+      path: '/',
+      name: 'download',
+      component: () => import('@/views/download/index.vue'), // Lazy-loaded HomeView
     },
   ],
 })

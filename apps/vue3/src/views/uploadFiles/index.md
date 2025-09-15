@@ -159,4 +159,6 @@ utils/useRequestQueue.ts  handleStatusUploadingFile 函数
 
 # 解决内存消耗的问题：
 
+- 选择文件，这里使引用文件，不怎么消耗内存
+
 - 切片的chunk有必要传回Blob？避免双倍的内存开销
