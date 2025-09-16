@@ -134,7 +134,7 @@
         // 4. 4.
         //  异步等待 ：如果缓冲区为空， read() 会等待新数据到达
 
-        const { done, value } = await this. .read() // 每次读取一个数据块
+        const { done, value } = await this.reader.read() // 每次读取一个数据块
         // //  value 大小 影响因素：
         // 1. 网络传输的分包大小
         // 2. 服务器的发送缓冲区大小
