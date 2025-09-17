@@ -262,7 +262,7 @@
       const fileName = extractFileName(downloadUrl.value, contentDisposition)
       currentFileName.value = fileName
       addDebugLog(`文件名: ${fileName}`)
-
+      debugger
       // 创建文件句柄
       fileHandle = await dirHandle.getFileHandle(fileName, { create: true })
 
