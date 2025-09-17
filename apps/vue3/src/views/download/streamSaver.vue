@@ -1,5 +1,10 @@
+<!-- 
+  引入StreamSaver，不能暂停下载；浏览器自带的能看到下载的信息 
+  -->
+
 <template>
   <div class="download-manager">
+    <a href="http://localhost:3023/file/download/4.mp4" download="">下载</a>
     <div class="download-item" v-for="download in downloads" :key="download.id">
       <div class="file-info">
         <h4>{{ download.filename }}</h4>
@@ -41,125 +46,85 @@
     </div>
 
     <div class="add-download">
-      <el-select v-model="selectData" placeholder="Select" style="width: 440px" multiple>
-        <el-option
-          v-for="item in selectDataOptios"
-          :key="item.value"
-          :label="item.label"
-          :value="item.value"
-        />
-      </el-select>
-      <button @click="addDownload">添加下载(同时下载{{ downloadNUmber }}个)</button>
+      <input
+        v-model="newDownloadUrl"
+        placeholder="输入文件名（如：4.mp4）"
+        @keyup.enter="addDownload"
+      />
+      <button @click="addDownload">添加下载</button>
     </div>
   </div>
 </template>
 
-<script setup lang="ts">
-  import { ref, reactive, onUnmounted, onMounted, type Ref } from 'vue'
-  import type { SelectOption, DownloadStatus, Download, ApiResponse, FileInfo } from './type'
+<script setup>
+  import { ref, reactive, onUnmounted } from 'vue'
+  // 引入StreamSaver
+  // 不能暂停重新下载
+  import streamSaver from 'streamsaver'
 
-  // 响应式数据
-  const selectData: Ref<string[]> = ref([])
-  const selectDataOptios: Ref<SelectOption[]> = ref([])
+  // 配置StreamSaver（可选，用于自定义Service Worker路径）
+  // streamSaver.mitm = '/streamsaver/mitm.html'
 
-  const downloadNUmber: Ref<number> = ref(3)
-
-  const downloads: Ref<Download[]> = ref([])
-  const downloadManagers = new Map<number, DownloadManager>()
-
-  // 选择保存目录
-  const dirHandle = ref<any>(null)
-
-  onMounted(async (): Promise<void> => {
-    try {
-      // 发起下载请求
-      const response = await fetch(`http://localhost:3023/file/list`)
-      const result: ApiResponse<SelectOption[]> = await response.json()
-      selectDataOptios.value = result.data
-    } catch (error) {
-      console.error('获取文件列表失败:', error)
-    }
-  })
-
-  // 清理资源
-  onUnmounted((): void => {
-    downloadManagers.forEach((manager: DownloadManager) => {
-      if (manager.controller) {
-        manager.controller.abort()
-      }
-    })
-  })
+  const downloads = ref([])
+  const newDownloadUrl = ref('4.mp4')
+  let downloadId = 0
 
   class DownloadManager {
-    download: Download
-    controller: AbortController | null
-    reader: ReadableStreamDefaultReader<Uint8Array> | null
-    startTime: number
-    lastProgressTime: number
-    lastDownloadedSize: number
-
-    constructor(download: Download) {
+    constructor(download) {
       this.download = download
       this.controller = null
       this.reader = null
       this.startTime = 0
       this.lastProgressTime = 0
       this.lastDownloadedSize = 0
+      this.fileStream = null // StreamSaver写入流
+      this.writer = null // 流写入器
     }
 
-    async start(): Promise<void> {
+    async start() {
       try {
         this.download.status = 'downloading'
         this.controller = new AbortController()
+
         // 获取文件信息
-        const fileInfo: FileInfo = await this.getFileInfo()
-
+        const fileInfo = await this.getFileInfo()
         this.download.totalSize = fileInfo.size
-        if (!dirHandle.value) {
-          dirHandle.value = await window.showDirectoryPicker({
-            mode: 'readwrite',
-            startIn: 'downloads',
-          })
+        console.log('fileInfo.size', formatFileSize(fileInfo.size))
+
+        // 创建StreamSaver写入流
+        this.fileStream = streamSaver.createWriteStream(this.download.filename, {
+          size: fileInfo.size, // 可选：指定文件大小
+        })
+        this.writer = this.fileStream.getWriter()
+
+        // 构建Range请求头
+        const headers = {}
+        if (this.download.downloadedSize > 0) {
+          headers['Range'] = `bytes=${this.download.downloadedSize}-`
         }
-        //   const downloadUrl = `http://localhost:3023/file/download/${this.fileName}`
-        //   // 请求头
-        //    const headResponse = await fetch(downloadUrl, { method: 'HEAD' })
-        // const contentLength = headResponse.headers.get('content-length')
-        // const contentDisposition = headResponse.headers.get('content-disposition')
-        // const contentType = headResponse.headers.get('content-type')
 
-        // // 构建Range请求头
-        // const headers: Record<string, string> = {}
-        // if (this.download.downloadedSize > 0) {
-        //   headers['Range'] = `bytes=${this.download.downloadedSize}-`
-        // }
+        // 发起下载请求
+        const response = await fetch(
+          `http://localhost:3023/file/download-with-progress/${this.download.filename}`,
+          {
+            headers,
+            signal: this.controller.signal,
+          }
+        )
 
-        // // 发起下载请求
-        // const response = await fetch(
-        //   `http://localhost:3023/file/download/${this.download.filename}`,
-        //   {
-        //     headers,
-        //     signal: this.controller.signal,
-        //   }
-        // )
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+        }
 
-        // if (!response.ok) {
-        //   throw new Error(`HTTP ${response.status}: ${response.statusText}`)
-        // }
+        // 获取响应流
+        this.reader = response.body.getReader()
+        this.startTime = Date.now()
+        this.lastProgressTime = this.startTime
+        this.lastDownloadedSize = this.download.downloadedSize
 
-        // // 获取响应流 --- 务器不是一次性发送整个文件，而是分块发送：
-        // if (!response.body) {
-        //   throw new Error('响应体为空')
-        // }
-
-        // this.reader = response.body.getReader() // 获取可读流的读取器
-        // this.startTime = Date.now()
-        // this.lastProgressTime = this.startTime
-        // this.lastDownloadedSize = this.download.downloadedSize
-
-        // // 读取流数据
-        // await this.readStream()
-      } catch (error: any) {
+        // 流式读取和写入数据
+        await this.streamData()
+      } catch (error) {
         if (error.name === 'AbortError') {
           this.download.status = 'paused'
         } else {
@@ -167,53 +132,42 @@
           this.download.status = 'error'
           this.download.error = error.message
         }
+
+        // 清理资源
+        await this.cleanup()
       }
     }
 
-    private async readStream(): Promise<void> {
-      if (!this.reader) return
+    async streamData() {
+      try {
+        while (true) {
+          const { done, value } = await this.reader.read()
 
-      const chunks: Uint8Array[] = []
+          if (done) {
+            this.download.status = 'completed'
+            this.download.progress = 100
 
-      while (true) {
-        // ### 浏览器端接收机制
-        // 浏览器的 ReadableStream 会：
+            // 关闭写入流
+            await this.writer.close()
+            console.log('下载完成:', this.download.filename)
+            break
+          }
 
-        // 1. 1.
-        //    建立连接 ：与服务器建立 HTTP 连接
-        // 2. 2.
-        //    缓冲数据 ：将接收到的数据存储在内部缓冲区
-        // 3. 3.
-        //    分块读取 ： read() 方法从缓冲区中取出数据块
-        // 4. 4.
-        //  异步等待 ：如果缓冲区为空， read() 会等待新数据到达
+          // 直接写入文件流，不占用内存
+          await this.writer.write(value)
 
-        const { done, value } = await this.reader.read() // 每次读取一个数据块
-        // //  value 大小 影响因素：
-        // 1. 网络传输的分包大小
-        // 2. 服务器的发送缓冲区大小
-        // 3. 浏览器的接收缓冲区状态
-        // 4. TCP 窗口大小和网络拥塞控制
-        if (done) {
-          this.download.status = 'completed'
-          this.download.progress = 100
-
-          // 下载完成，触发文件保存
-          const blob = new Blob(chunks)
-          this.saveFile(blob)
-          break
-        }
-
-        if (value) {
           // 更新下载进度
-          chunks.push(value)
           this.download.downloadedSize += value.length
           this.updateProgress()
         }
+      } catch (error) {
+        // 如果写入失败，中止写入流
+        await this.writer.abort()
+        throw error
       }
     }
 
-    private updateProgress(): void {
+    updateProgress() {
       const now = Date.now()
 
       // 计算进度百分比
@@ -230,7 +184,7 @@
       }
     }
 
-    private async getFileInfo(): Promise<FileInfo> {
+    async getFileInfo() {
       const response = await fetch(`http://localhost:3023/file/file-info/${this.download.filename}`)
       if (!response.ok) {
         throw new Error('获取文件信息失败')
@@ -238,77 +192,88 @@
       return await response.json()
     }
 
-    private saveFile(blob: Blob): void {
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = this.download.filename
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
-    }
+    // 不再需要saveFile方法，因为StreamSaver直接处理文件保存
+    // saveFile(blob) { ... } // 删除此方法
 
-    pause(): void {
+    async pause() {
       if (this.controller) {
         this.controller.abort()
       }
+      await this.cleanup()
       this.download.status = 'paused'
     }
 
-    cancel(): void {
+    async cancel() {
       if (this.controller) {
         this.controller.abort()
       }
+      await this.cleanup()
       this.download.status = 'cancelled'
       this.download.downloadedSize = 0
       this.download.progress = 0
     }
-  }
 
-  const addDownload = () => {
-    selectData.value.forEach((filename, id) => {
-      const download: Download = reactive({
-        id,
-        filename: filename,
-        status: 'pending', // pending, downloading, paused, completed, error, cancelled
-        progress: 0,
-        downloadedSize: 0,
-        totalSize: 0,
-        speed: 0,
-        error: null,
-      })
-      downloads.value.push(download)
-      downloadManagers.set(download.id, new DownloadManager(download))
-    })
-    selectData.value = []
-  }
-
-  const toggleDownload = (download: Download) => {
-    const manager = downloadManagers.get(download.id)
-    if (!manager) return
-    if (download.status === 'downloading') {
-      manager.pause()
-    } else if (download.status === 'paused' || download.status === 'pending') {
-      manager.start()
+    async cleanup() {
+      try {
+        if (this.writer) {
+          await this.writer.abort()
+          this.writer = null
+        }
+        if (this.reader) {
+          await this.reader.cancel()
+          this.reader = null
+        }
+        this.fileStream = null
+      } catch (error) {
+        console.warn('清理资源时出错:', error)
+      }
     }
   }
 
-  function cancelDownload(download: Download): void {
-    const manager = downloadManagers.get(download.id)
-    if (!manager) return
+  const downloadManagers = new Map()
 
-    manager.cancel()
+  function addDownload() {
+    if (!newDownloadUrl.value.trim()) return
+
+    const download = reactive({
+      id: ++downloadId,
+      filename: newDownloadUrl.value.trim(),
+      status: 'pending', // pending, downloading, paused, completed, error, cancelled
+      progress: 0,
+      downloadedSize: 0,
+      totalSize: 0,
+      speed: 0,
+      error: null,
+    })
+
+    downloads.value.push(download)
+    downloadManagers.set(download.id, new DownloadManager(download))
+    newDownloadUrl.value = ''
+  }
+
+  async function toggleDownload(download) {
+    const manager = downloadManagers.get(download.id)
+
+    if (download.status === 'downloading') {
+      await manager.pause()
+    } else if (download.status === 'paused' || download.status === 'pending') {
+      await manager.start()
+    }
+  }
+
+  async function cancelDownload(download) {
+    const manager = downloadManagers.get(download.id)
+    await manager.cancel()
 
     // 从列表中移除
-    const index = downloads.value.findIndex((d: Download) => d.id === download.id)
+    const index = downloads.value.findIndex(d => d.id === download.id)
     if (index > -1) {
       downloads.value.splice(index, 1)
     }
     downloadManagers.delete(download.id)
   }
 
-  function getButtonText(status: DownloadStatus): string {
+  function getButtonText(status) {
     switch (status) {
       case 'downloading':
         return '暂停'
@@ -323,7 +288,7 @@
     }
   }
 
-  function getStatusText(status: DownloadStatus): string {
+  function getStatusText(status) {
     switch (status) {
       case 'pending':
         return '等待中'
@@ -342,7 +307,7 @@
     }
   }
 
-  function formatFileSize(bytes: number): string {
+  function formatFileSize(bytes) {
     if (bytes === 0) return '0 B'
     const k = 1024
     const sizes = ['B', 'KB', 'MB', 'GB']
@@ -350,9 +315,17 @@
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
   }
 
-  function formatSpeed(bytesPerSecond: number): string {
+  function formatSpeed(bytesPerSecond) {
     return formatFileSize(bytesPerSecond) + '/s'
   }
+
+  // 清理资源
+  onUnmounted(async () => {
+    for (const manager of downloadManagers.values()) {
+      await manager.cleanup()
+    }
+    downloadManagers.clear()
+  })
 </script>
 
 <style scoped>

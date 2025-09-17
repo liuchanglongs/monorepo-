@@ -316,4 +316,45 @@ router.get("/file-info/:filename", (req, res) => {
   }
 });
 
+// 获取uploads目录下所有文件列表
+router.get("/list", (req, res) => {
+  try {
+    // 检查uploads目录是否存在
+    if (!fs.existsSync(UPLOAD_DIR)) {
+      return res.status(404).json({
+        code: 404,
+        message: "uploads目录不存在",
+        data: [],
+      });
+    }
+
+    // 读取目录内容
+    const files = fs.readdirSync(UPLOAD_DIR);
+
+    // 过滤出文件（排除目录）并格式化返回数据
+    const fileList = files
+      .filter((item) => {
+        const itemPath = path.join(UPLOAD_DIR, item);
+        return fs.statSync(itemPath).isFile(); // 只返回文件，不包括目录
+      })
+      .map((filename) => ({
+        label: filename,
+        value: filename,
+      }));
+
+    res.status(200).json({
+      code: 200,
+      message: "获取文件列表成功",
+      data: fileList,
+    });
+  } catch (error) {
+    console.error("获取文件列表错误:", error);
+    res.status(500).json({
+      code: 500,
+      message: "获取文件列表失败",
+      error: error.message,
+    });
+  }
+});
+
 module.exports = router; // 导出路由

@@ -4,6 +4,8 @@
     <el-button @click="showDirectoryPicker">选择目录</el-button>
     <el-button @click="saveFile">saveFile</el-button>
     <el-button @click="continueSaveFile">continueSaveFile</el-button>
+    <el-button @click="keepExistingData()">keepExistingData one</el-button>
+    <el-button @click="keepExistingData('two')">keepExistingData two</el-button>
 
     <!-- 下载功能区域 -->
     <div style="margin-top: 20px; padding: 20px; border: 1px solid #ddd">
@@ -87,6 +89,63 @@
     expectedHash: '', // 用于文件完整性验证
     actualHash: '',
   })
+
+  const keepExistingDataDirHandle = ref(null)
+  const keepExistingData = async (test?: any) => {
+    if (!test) {
+      test = '123456789'
+      keepExistingDataDirHandle.value = await window.showDirectoryPicker({
+        mode: 'readwrite', // 必须指定为 readwrite，否则无写入权限
+        startIn: 'downloads', // 可选：默认从"下载"目录开始
+        suggestedName: 'MySavedFiles', // 可选：建议的目录名（用户可修改）
+      })
+      const dirHandle = keepExistingDataDirHandle.value
+      const fileHandle = await dirHandle.getFileHandle(
+        'saved-demo-file.txt', // 要保存的文件名
+        { create: true } // create: true 表示不存在时创建
+      )
+      // 4. 步骤4：写入内容到文件
+      // 创建可写流（writable stream）
+      const writable = await fileHandle.createWritable()
+      /**
+       * 写入内容（支持文本、Blob、ArrayBuffer 等）
+       * 临时文件上的当前指针偏移处写入内容，有内容就覆盖内容
+       * */
+      await writable.write(test)
+      await writable.close()
+    } else {
+      const dirHandle =
+        keepExistingDataDirHandle.value ||
+        (await window.showDirectoryPicker({
+          mode: 'readwrite', // 必须指定为 readwrite，否则无写入权限
+          startIn: 'downloads', // 可选：默认从"下载"目录开始
+          suggestedName: 'MySavedFiles', // 可选：建议的目录名（用户可修改）
+        }))
+
+      const fileHandle = await dirHandle.getFileHandle(
+        'saved-demo-file.txt', // 要保存的文件名
+        { create: true } // create: true 表示不存在时创建
+      )
+      const existingFile = await fileHandle.getFile()
+      const existingArrayBuffer = await existingFile.arrayBuffer()
+
+      const position = existingArrayBuffer.byteLength || 0
+      console.log('position', position)
+
+      // 4. 步骤4：写入内容到文件
+      // 创建可写流（writable stream）
+      const writable = await fileHandle.createWritable({ keepExistingData: true })
+      // 1. 写入内容（支持文本、Blob、ArrayBuffer 等）
+      // await writable.write(test)// two456789
+      // 2. 末尾写入内容：将文件当前的指针更新到指定的偏移位置
+      // await writable.write({ type: 'seek', position })
+      // await writable.write(test)
+      // 3.
+      await writable.write({ type: 'write', position, data: test })
+      // 关闭流，完成写入（必须调用，否则文件可能损坏）
+      await writable.close()
+    }
+  }
 
   // 下载控制器和读取器
   let abortController: AbortController | null = null
@@ -427,18 +486,18 @@
       addDebugLog(`现有文件大小: ${existingArrayBuffer.byteLength} 字节`)
 
       // 重新创建可写流
-      // 为啥加了keepExistingData 不行？
-      // writable = await fileHandle.createWritable({ keepExistingData: true })
-      writable = await fileHandle.createWritable()
+      writable = await fileHandle.createWritable({ keepExistingData: true })
+      // writable = await fileHandle.createWritable()
 
       // 先写入现有数据
-      if (existingArrayBuffer.byteLength > 0) {
-        await writable.write(existingArrayBuffer)
-        addDebugLog(`已写入现有数据: ${existingArrayBuffer.byteLength} 字节`)
-      }
+      // if (existingArrayBuffer.byteLength > 0) {
+      //   await writable.write(existingArrayBuffer)
+      //   addDebugLog(`已写入现有数据: ${existingArrayBuffer.byteLength} 字节`)
+      // }
 
       addDebugLog('开始写入新数据...')
-
+      // 设置写入位置
+      await writable.write({ type: 'seek', position: existingArrayBuffer.byteLength })
       // 继续读取剩余数据
       await readStream()
     } catch (error: any) {

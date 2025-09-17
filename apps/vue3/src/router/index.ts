@@ -19,12 +19,12 @@ const router = createRouter({
       component: () => import('@/views/uploadFiles/index.vue'), // Lazy-loaded HomeView
     },
     {
-      path: '/download',
+      path: '/',
       name: 'download',
       component: () => import('@/views/download/index.vue'), // Lazy-loaded HomeView
     },
     {
-      path: '/',
+      path: '/fileAPI',
       name: 'fileAPI',
       component: () => import('@/views/fileAPI/index.vue'), // Lazy-loaded HomeView
     },
