@@ -155,10 +155,74 @@ utils/useRequestQueue.ts  handleStatusUploadingFile 函数
 
 ## 控制同时上传的个数
 
-&emsp;&emsp; 看这个 changeUploadNumber 函数 5. 暂停 / 恢复功能：
+&emsp;&emsp; 看这个 changeUploadNumber 函数
+
+## 恢复功能：
+
+没做
 
 # 解决内存消耗的问题：
 
-- 选择文件，这里使引用文件，不怎么消耗内存
+&emsp;&emsp; 选择文件，这里使引用文件，不怎么消耗内存
 
-- 切片的chunk有必要传回Blob？避免双倍的内存开销
+1. 切片的chunk文件：不要保存Blob，只需要保存startsize-endSize, 在进行hash计算与切片上传的时候再去获取对应的Blob。避免双倍的内存开销。
+
+2. 占用内存太大的解决方案？创建一个缓冲区，超过及阻塞
+   &emsp;&emsp; `例如（这里只是个例子）`：下面代码超过maxBufferSize，在进行hash计算就可以停下。小于minBufferSize就继续开始计算切片的hash
+
+```
+class AdvancedBufferedUploader extends BufferedFileUploader {
+  constructor(file, options = {}) {
+    super(file, options)
+
+    // 动态缓冲区控制
+    this.minBufferSize = options.minBufferSize || 1
+    this.maxBufferSize = options.maxBufferSize || 5
+    this.currentMaxBuffer = this.minBufferSize
+
+    // 性能监控
+    this.uploadSpeed = 0
+    this.readSpeed = 0
+  }
+
+  // 动态调整缓冲区大小
+  adjustBufferSize() {
+    if (this.uploadSpeed > this.readSpeed) {
+      // 上传快，可以增加缓冲区
+      this.currentMaxBuffer = Math.min(this.currentMaxBuffer + 1, this.maxBufferSize)
+    } else {
+      // 读取快，减少缓冲区
+      this.currentMaxBuffer = Math.max(this.currentMaxBuffer - 1, this.minBufferSize)
+    }
+
+    console.log(`调整缓冲区大小: ${this.currentMaxBuffer}`)
+  }
+
+  async startReading() {
+    this.isReading = true
+
+    while (this.currentOffset < this.totalSize && this.isReading) {
+      // 使用动态缓冲区大小
+      while (this.buffer.length >= this.currentMaxBuffer) {
+        await this.waitForBufferSpace()
+      }
+
+      const startTime = Date.now()
+      const chunk = await this.readNextChunk()
+      const readTime = Date.now() - startTime
+
+      if (chunk) {
+        this.buffer.push(chunk)
+        this.readSpeed = chunk.size / readTime // bytes/ms
+
+        // 定期调整缓冲区
+        if (chunk.index % 10 === 0) {
+          this.adjustBufferSize()
+        }
+      }
+    }
+
+    this.isReading = false
+  }
+}
+```
