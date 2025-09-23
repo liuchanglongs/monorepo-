@@ -116,16 +116,11 @@
       this.fileHandle = null
       this.writable = null
     }
-
+    // 方法一：
     async start(): Promise<void> {
       try {
-        const status = this.download.status
-        const downloadUrl = `http://localhost:3023/file/download/${this.download.filename}`
-        this.controller = new AbortController()
         // 获取文件信息
         const fileInfo: FileInfo = await this.getFileInfo()
-        this.download.status = 'downloading'
-
         this.download.totalSize = fileInfo.size
         if (!dirHandle.value) {
           dirHandle.value = await window.showDirectoryPicker({
@@ -133,40 +128,29 @@
             startIn: 'downloads',
           })
         }
-
         // 创建文件句柄
         this.fileHandle = await dirHandle.value.getFileHandle(this.download.filename, {
           create: true,
         })
         // 创建可写流
         this.writable = await this.fileHandle.createWritable()
-
-        // 发起下载请求
-        const response = await fetch(downloadUrl, {
-          signal: this.controller.signal,
-        })
-
+        const response = await this.fetchStream()
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}: ${response.statusText}`)
         }
-
         // 获取响应流 --- 不是一次性发送整个文件，而是分块发送：
         if (!response.body) {
           throw new Error('无法获取响应流')
         }
-        // 方法1：
-        this.reader = response.body.getReader() // 获取可读流的读取器
-
-        this.startTime = Date.now()
-        this.lastProgressTime = this.startTime
-        this.lastDownloadedSize = this.download.downloadedSize
-
+        // 创建进度和背压处理的转换流
+        const progressTransform = new TransformStream({
+          transform(chunk, controller) {
+            controller.enqueue(chunk)
+          },
+        })
+        this.reader = response.body.pipeThrough(progressTransform).getReader() // 获取可读流的读取器
         // 读取流数据
         await this.readStream()
-
-        // 方法2：
-        // // 创建可写流
-        // const writable = await this.fileHandle.createWritable()
       } catch (error: any) {
         if (error.name === 'AbortError') {
           this.download.status = 'paused'
@@ -177,21 +161,10 @@
         }
       }
     }
+    // 方法一：
     async resumeDownload() {
       try {
-        // 创建新的中止控制器
-        this.controller = new AbortController()
-        const downloadUrl = `http://localhost:3023/file/download/${this.download.filename}`
-        this.download.status = 'downloading'
-
-        // 使用Range请求从断点继续
-        const response = await fetch(downloadUrl, {
-          headers: {
-            Range: `bytes=${this.download.downloadedSize}-`,
-          },
-          signal: this.controller.signal,
-        })
-
+        const response = await this.fetchStream()
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}: ${response.statusText}`)
         }
@@ -200,9 +173,15 @@
         if (!response.body) {
           throw new Error('无法获取响应流')
         }
-
-        // 方法1：
-        this.reader = response.body.getReader() // 获取可读流的读取器
+        // 创建进度和背压处理的转换流
+        const progressTransform = new TransformStream({
+          transform(chunk, controller) {
+            controller.enqueue(chunk)
+          },
+        })
+        this.reader = response.body.pipeThrough(progressTransform).getReader() // 获取可读流的读取器
+        // 读取流数据
+        await this.readStream()
         // 关键修复：获取现有文件内容，然后重新创建包含现有数据的文件
         // const existingFile = await this.fileHandle.getFile()
         // const existingArrayBuffer = await existingFile.arrayBuffer()
@@ -215,11 +194,26 @@
         // writable = await fileHandle.createWritable({ keepExistingData: true })
         // 设置写入位置
         // await this.writable.write({ type: 'seek', position: existingArrayBuffer.byteLength })
-        // 读取流数据
-        await this.readStream()
       } catch (error: any) {
         console.log(error)
       }
+    }
+
+    async fetchStream() {
+      this.download.status = 'downloading'
+      const downloadUrl = `http://localhost:3023/file/download/${this.download.filename}`
+      this.controller = new AbortController()
+      // 发起下载请求
+      const response = await fetch(downloadUrl, {
+        signal: this.controller.signal,
+        headers: {
+          Range: `bytes=${this.download.downloadedSize}-`,
+        },
+      })
+      this.startTime = Date.now()
+      this.lastProgressTime = this.startTime
+      this.lastDownloadedSize = this.download.downloadedSize
+      return response
     }
 
     private async readStream(): Promise<void> {
@@ -231,6 +225,10 @@
             console.log('检测到暂停信号，停止读取')
             break
           }
+          // 当内部缓冲区满时，ReadableStream 会自动：
+          // 1. 暂停从网络接收数据
+          // 2. reader.read() 会等待直到有空间
+          // 3. 网络层收到背压信号，减缓发送速度
           const { done, value } = await this.reader.read()
           if (done) {
             // 下载完成
@@ -238,16 +236,13 @@
             this.writable = null
             this.download.status = 'completed'
             this.download.progress = 100
-            // 下载完成，触发文件保存
-            // const blob = new Blob(chunks)
-            // this.saveFile(blob)
             break
           }
 
           if (value) {
             // 写入数据到文件
-            console.log('this.writable', this.writable)
-
+            console.log('this.writable')
+            // WritableStream 内部会处理背压
             await this.writable.write(value)
             // 更新下载进度
             this.download.downloadedSize += value.length
@@ -258,41 +253,86 @@
         console.log('write:', error)
       }
     }
-    // private async pipeToStream () {
-    //   // 5. 关键：创建进度监控转换流
-    //   // let downloadedBytes = 0;
-    //   const that = this
-    //   const progressTransform = new TransformStream({
-    //     transform(chunk, controller) {
-    //       // 更新下载进度
-    //       that.download.downloadedSize += chunk.byteLength
-    //       that.updateProgress()
-    //       // 累加已下载字节数
-    //       // downloadedBytes += chunk.byteLength;
-    //       // 计算进度百分比
-    //       // const progress = Math.min(Math.round((downloadedBytes / contentLength) * 100), 100);
+    // 方法二：使用pipeTo
+    async start2(): Promise<void> {
+      try {
+        // 获取文件信息
+        const fileInfo: FileInfo = await this.getFileInfo()
+        this.download.totalSize = fileInfo.size
+        if (!dirHandle.value) {
+          dirHandle.value = await window.showDirectoryPicker({
+            mode: 'readwrite',
+            startIn: 'downloads',
+          })
+        }
+        // 创建文件句柄
+        this.fileHandle = await dirHandle.value.getFileHandle(this.download.filename, {
+          create: true,
+        })
+        // 创建可写流
+        this.writable = await this.fileHandle.createWritable()
+        this.pipeToStream()
+      } catch (error: any) {
+        if (error.name === 'AbortError') {
+          this.download.status = 'paused'
+        } else {
+          console.error('Download error:', error)
+          this.download.status = 'error'
+          this.download.error = error.message
+        }
+      }
+    }
+    // 方法二：使用pipeTo
+    async resumeDownload2() {
+      try {
+        this.pipeToStream()
+      } catch (error: any) {
+        console.log('resumeDownload2', error)
+      }
+    }
 
-    //       // 更新UI（使用requestAnimationFrame确保渲染流畅）
-    //       // requestAnimationFrame(() => {
-    //       //   progressText.textContent = `${progress}%`;
-    //       //   progressBar.style.width = `${progress}%`;
-    //       //   status.textContent = `正在下载: ${formatFileSize(downloadedBytes)} / ${formatFileSize(contentLength)}`;
-    //       // });
+    private async pipeToStream() {
+      try {
+        // 5. 关键：创建进度监控转换流
+        const that = this
+        const progressTransform = new TransformStream({
+          transform(chunk, controller) {
+            // 更新下载进度
+            that.download.downloadedSize += chunk.byteLength
+            that.updateProgress()
+            // 更新UI（使用requestAnimationFrame确保渲染流畅）
+            // requestAnimationFrame(() => {
+            // });
 
-    //       // 将数据传递给下一个流（不修改原始数据）
-    //       controller.enqueue(chunk)
-    //     },
-    //   })
-    //   const res = await response.body
-    //     .pipeThrough(progressTransform) // 先经过进度监控流
-    //     .pipeTo(writable) // 获取可读流的读取器
-    //   this.writable = null
-    //   this.download.status = 'completed'
-    //   this.download.progress = 100
-    // }
+            // 将数据传递给下一个流（不修改原始数据）
+            controller.enqueue(chunk)
+          },
+        })
+        const response = await this.fetchStream()
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+        }
+        // 获取响应流 --- 不是一次性发送整个文件，而是分块发送：
+        if (!response.body) {
+          throw new Error('无法获取响应流')
+        }
+        console.log('this.writable', this.writable)
+
+        const res = await response.body
+          .pipeThrough(progressTransform) // 先经过进度监控流
+          .pipeTo(this.writable) // 获取可读流的读取器
+        console.log('res', res)
+        await this.writable.close()
+        this.writable = null
+        this.download.status = 'completed'
+        this.download.progress = 100
+      } catch (error) {
+        console.log('pipeToStream', error)
+      }
+    }
+
     private updateProgress(): void {
       const now = Date.now()
-
       // 计算进度百分比
       this.download.progress = (this.download.downloadedSize / this.download.totalSize) * 100
 
@@ -318,6 +358,7 @@
     pause(): void {
       if (this.controller) {
         this.controller.abort()
+        this.controller = null
       }
       this.download.status = 'paused'
     }
@@ -358,17 +399,16 @@
       manager.pause()
     } else if (download.status === 'paused') {
       manager.resumeDownload()
+      // manager.resumeDownload2()
     } else if (download.status === 'pending') {
       manager.start()
+      // manager.start2()
     }
   }
-
   function cancelDownload(download: Download): void {
     const manager = downloadManagers.get(download.id)
     if (!manager) return
-
     manager.cancel()
-
     // 从列表中移除
     const index = downloads.value.findIndex((d: Download) => d.id === download.id)
     if (index > -1) {
