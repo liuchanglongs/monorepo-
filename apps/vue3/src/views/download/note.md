@@ -2,6 +2,7 @@
 
 - 链接：https://developer.mozilla.org/zh-CN/docs/Web/API/File_System_API
   &emsp;&emsp;文件系统 API（File System API）——以及通过文件系统访问 API（File System Access API）提供的扩展来访问设备文件系统中的文件——允许使用文件读写以及文件管理功能。任何通过写入流造成的更改在写入流被关闭前都不会反映到文件句柄所代表的文件上。这通常是将数据`写入到一个临时文件`来实现的，然后只有在`写入文件流被正常关闭（close）后`才会用`临时文件替换掉文件句柄所代表的文件（文件越大过程越慢）`。
+- 开发环境：localHost\生产环境https
 - 关键API的使用：
 
 ```js
