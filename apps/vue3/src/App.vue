@@ -40,7 +40,6 @@
     }
     if (routes?.length && routes[0].children) {
       menus.value = getMenuFn(routes[0].children, [])
-      console.log(menus.value)
     }
   })
 </script>

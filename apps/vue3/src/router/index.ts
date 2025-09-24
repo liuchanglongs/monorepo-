@@ -60,6 +60,19 @@ export const routes: RouteRecordRaw[] = [
           },
         ],
       },
+      {
+        path: '/storage',
+        name: 'storage',
+        meta: { label: '浏览器存储' },
+        children: [
+          {
+            path: '/storage/IndexedDB',
+            name: 'IndexedDB',
+            meta: { label: 'IndexedDB' },
+            component: () => import('@/views/storage/IndexedDB.vue'),
+          },
+        ],
+      },
     ],
   },
 ]
