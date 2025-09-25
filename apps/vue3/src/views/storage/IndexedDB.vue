@@ -2,6 +2,7 @@
   <el-button @click="initIndexedDB" size="small">打开IndexedDB</el-button>
   <el-button @click="closeIndexedDB" size="small">关闭IndexedDB</el-button>
   <el-button @click="addIndexedDBData" size="small">添加数据</el-button>
+  <el-button @click="searchIndexedDBData" size="small">查询数据</el-button>
 </template>
 
 <script setup lang="ts">
@@ -52,33 +53,13 @@
             keyPath: 'stuId', // 这是主键
             autoIncrement: true, // 实现自增
           })
+
+          // 创建索引
+          objectStore.createIndex('nameIndex', 'name', { unique: false })
+          objectStore.createIndex('ageIndex', 'age', { unique: false })
+          objectStore.createIndex('emailIndex', 'email', { unique: false })
         }
       })
-    }
-
-    /**
-     * 设置数据库结构
-     */
-    private setupDatabase(db: IDBDatabase): void {
-      // 我们的客户数据示例
-      const customerData: Customer[] = [
-        { ssn: '444-44-4444', name: 'Bill', age: 35, email: 'bill@company.com' },
-        { ssn: '555-55-5555', name: 'Donna', age: 32, email: 'donna@home.org' },
-      ]
-
-      // 创建对象存储
-      if (!db.objectStoreNames.contains('customers')) {
-        const objectStore: IDBObjectStore = db.createObjectStore('customers', { keyPath: 'ssn' })
-
-        // 创建索引
-        objectStore.createIndex('name', 'name', { unique: false })
-        objectStore.createIndex('email', 'email', { unique: true })
-
-        // 使用事务的 oncomplete 事件确保在插入数据前对象存储已经创建完毕
-        objectStore.transaction.oncomplete = () => {
-          this.addInitialData(customerData)
-        }
-      }
     }
 
     /**
@@ -94,8 +75,9 @@
           reject(new Error('数据库未打开'))
           return
         }
-
+        // 启动一个事务
         const transaction: IDBTransaction = this.db.transaction(['stu'], 'readwrite')
+        // 使用事务对象
         const objectStore: IDBObjectStore = transaction.objectStore('stu')
         const request: IDBRequest = objectStore.add(data)
         request.onsuccess = () => {
@@ -122,22 +104,59 @@
         console.log('IndexedDB 已关闭')
       }
     }
-
-    /**
-     * 删除数据库
-     */
-    static deleteDatabase(name: string): Promise<void> {
+    searchData() {
       return new Promise((resolve, reject) => {
-        const deleteRequest: IDBOpenDBRequest = window.indexedDB.deleteDatabase(name)
-
-        deleteRequest.onsuccess = () => {
-          console.log('数据库删除成功')
-          resolve()
+        if (!this.db) {
+          reject(new Error('数据库未打开'))
+          return
         }
+        // 启动一个事务
+        const transaction: IDBTransaction = this.db.transaction(['stu'], 'readonly')
+        // 使用事务对象
+        const objectStore: IDBObjectStore = transaction.objectStore('stu')
+        /**
+         * 1. 通过主键读取数据
+         * */
+        // // const request = objectStore.get(1758805353533)
+        // const request = objectStore.getAll()
+        // request.onsuccess = function (event: any) {
+        //   console.log('通过主键查询结果', event.target.result)
+        //   resolve(event.target.result)
+        // }
 
-        deleteRequest.onerror = () => {
-          console.error('数据库删除失败')
-          reject(deleteRequest.error)
+        /**
+         * 2. 通过索引读取数据
+         * */
+        // const index = objectStore.index('ageIndex')
+        // // const request = index.getAll(IDBKeyRange.upperBound(50))
+        // // 按照索引升序，找到第一个匹配
+        // const request = index.get(IDBKeyRange.upperBound(50))
+
+        // request.onsuccess = function (event: any) {
+        //   console.log('通过索引查询结果', event.target.result)
+        //   resolve(event.target.result)
+        // }
+        // request.onerror = function (event: any) {
+        //   console.error('查询失败', event.target.error)
+        //   reject(event.target.error)
+        // }
+
+        const request = objectStore.openCursor()
+        const list: any[] = []
+        request.onsuccess = function (event: any) {
+          const cursor = event.target.result
+
+          if (cursor) {
+            list.push(cursor.value)
+            cursor.continue()
+          } else {
+            resolve(list)
+            console.log(list)
+          }
+        }
+        request.onerror = function (event: any) {
+          console.error('遍历失败', event.target.error)
+          reject(event.target.error)
         }
       })
     }
@@ -171,5 +190,9 @@
 
   const addIndexedDBData = () => {
     myDB.addData(generateRandomCustomer())
+  }
+
+  const searchIndexedDBData = () => {
+    myDB.searchData()
   }
 </script>
